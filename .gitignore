@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Rust / Tauri build output
+launcher/src-tauri/target/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/

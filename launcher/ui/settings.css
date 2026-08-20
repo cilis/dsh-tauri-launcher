@@ -1,0 +1,157 @@
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  background:
+    radial-gradient(700px 400px at 10% -10%, #15304b 0%, transparent 60%),
+    radial-gradient(600px 380px at 110% 110%, #1c2644 0%, transparent 55%),
+    #0b0f17;
+  color: #e5eaf2;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+.settings {
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 22px 24px 18px;
+}
+
+h1 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 14px;
+  letter-spacing: 0.3px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  border-top: 1px solid rgba(148, 180, 220, 0.1);
+}
+
+.row:first-of-type {
+  border-top: none;
+}
+
+.info {
+  flex: 1;
+  min-width: 0;
+}
+
+.label {
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 3px;
+}
+
+.desc {
+  font-size: 12px;
+  color: #8ea0b8;
+  line-height: 1.6;
+}
+
+kbd {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: rgba(96, 165, 250, 0.12);
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 11px;
+  color: #93c5fd;
+  white-space: nowrap;
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 42px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+  background: rgba(148, 180, 220, 0.22);
+  border-radius: 999px;
+  transition: background 0.15s ease;
+}
+
+.slider::before {
+  content: "";
+  position: absolute;
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  top: 3px;
+  background: #e5eaf2;
+  border-radius: 50%;
+  transition: transform 0.15s ease;
+}
+
+.switch input:checked + .slider {
+  background: linear-gradient(135deg, #0ea5e9, #4f46e5);
+}
+
+.switch input:checked + .slider::before {
+  transform: translateX(18px);
+}
+
+.switch input:disabled + .slider {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.status {
+  min-height: 18px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: #6ee7a0;
+  word-break: break-all;
+}
+
+.status.err {
+  color: #f87171;
+}
+
+#close-btn {
+  display: block;
+  margin: 6px auto 0;
+  padding: 8px 32px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  background: rgba(148, 180, 220, 0.12);
+  color: #cbd5e1;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.12s ease;
+}
+
+#close-btn:hover {
+  background: rgba(148, 180, 220, 0.2);
+}

@@ -1,0 +1,34 @@
+# 打 v* tag 时自动构建 Windows 桌面应用并发布 GitHub Release。
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-launcher:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 cargo 注册表
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: launcher/src-tauri
+
+      - name: 构建 release exe
+        run: cargo build --release
+        working-directory: launcher/src-tauri
+
+      - name: 发布 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: launcher/src-tauri/target/release/dsh-launcher.exe
+          generate_release_notes: true

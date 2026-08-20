@@ -1,0 +1,7 @@
+# dsh-tauri-launcher 组合包补丁：向宿主组合插入双面插件行。
+# 宿主半（exports "."）在 Node 进程内注册 /api/dsh-tauri-launcher/* 回环路由；
+# 浏览器半（exports "./client"，经 package.json 的 dsh.client 声明发现）
+# 在 Web 设置面板注册「桌面启动」分区。
+- insert:
+    - id: desktop-launcher
+      name: '@lenorin/dsh-tauri-launcher'
