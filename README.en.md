@@ -1,4 +1,4 @@
-# dsh-tauri-launcher
+# DSH Tauri Launcher
 
 <div align="right">
 
