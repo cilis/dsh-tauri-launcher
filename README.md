@@ -1,6 +1,6 @@
-# dsh-tauri-launcher
+# DSH Tauri Launcher
 
-<div align="right">
+<div align="center">
 
 **[English](./README.en.md)**
 
