@@ -1,6 +1,6 @@
 [package]
 name = "dsh-launcher"
-version = "0.1.0"
+version = "1.0.1"
 description = "DeepSeek Harness 桌面启动器：自动检测/安装并启动本地 DeepSeek Harness，系统托盘管理退出"
 authors = ["lenorin"]
 edition = "2021"

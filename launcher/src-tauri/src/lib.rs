@@ -501,6 +501,9 @@ async fn launch_dsh(state: State<'_, AppState>) -> Result<LaunchInfo, String> {
     let mut cmd = tokio::process::Command::new(&node);
     cmd.arg(&bin)
         .arg("web")
+        // 桌面启动器用内嵌 WebView 展示 GUI，禁止 dsh web 再打开系统默认浏览器
+        // （dsh web 的 openBrowser 默认 true：重启后无既有实例时，每次拉起都会弹浏览器）。
+        .arg("--no-open")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);

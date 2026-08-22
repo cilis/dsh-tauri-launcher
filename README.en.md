@@ -104,11 +104,11 @@ Pick one of the three installation methods:
 dsh plugin --profile web add @lenorin/dsh-tauri-launcher
 
 # 2) GitHub (git install; pure JS, zero build, no allowBuilds grant required)
-dsh plugin --profile web add github:you/dsh-tauri-launcher
+dsh plugin --profile web add github:cilis/dsh-tauri-launcher
 
 # 3) Local checkout / tarball
 dsh plugin --profile web add ./dsh-tauri-launcher
-dsh plugin --profile web add ./dsh-tauri-launcher-1.0.0.tgz
+dsh plugin --profile web add ./dsh-tauri-launcher-1.0.1.tgz
 ```
 
 > If you have multiple profiles, replace `web` in the commands with the target profile name.
