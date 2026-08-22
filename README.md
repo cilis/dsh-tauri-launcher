@@ -138,6 +138,10 @@ dsh plugin --profile web remove @lenorin/dsh-tauri-launcher
 
 - npm 包自带预编译 exe（`launcher/bin/dsh-launcher.exe`），插件安装后自动探测、装上即用；
 - 本地自行构建：`pwsh -File launcher/build.ps1`（可选 `-Offline -CargoHome <dir>`）；
+- ⚠️ 维护纪律：**修改 `launcher/src-tauri` 下的 Rust 源码后，必须重新构建并同步
+  `launcher/bin/dsh-launcher.exe`**（发布流程见 [docs/release.md](docs/release.md)），
+  否则 npm 包内 exe 与源码漂移；版本号需在 `package.json` / `Cargo.toml` /
+  `tauri.conf.json` 三处同步。
 - GitHub Release：推送 `v*` tag，CI 自动构建 Windows exe 并发布（Linux/macOS 构建
   尚未启用，见 [docs/release.md](docs/release.md)）。
 

@@ -145,6 +145,10 @@ fit common deployments):
 
 - The npm package ships a pre-built exe (`launcher/bin/dsh-launcher.exe`); the plugin auto-detects it on install — ready to use out of the box;
 - Local build: `pwsh -File launcher/build.ps1` (optional `-Offline -CargoHome <dir>`);
+- ⚠️ Maintenance rule: **after editing Rust sources under `launcher/src-tauri`, you must
+  rebuild and re-sync `launcher/bin/dsh-launcher.exe`** (see [docs/release.md](docs/release.md)),
+  or the shipped exe will drift from the sources; keep the version in `package.json` /
+  `Cargo.toml` / `tauri.conf.json` in sync.
 - GitHub Release: push a `v*` tag; CI auto-builds the Windows exe and publishes it
   (Linux/macOS builds are not enabled yet — see [docs/release.md](docs/release.md)).
 

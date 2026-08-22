@@ -23,6 +23,10 @@ jobs:
         with:
           workspaces: launcher/src-tauri
 
+      - name: 运行回归测试
+        run: cargo test
+        working-directory: launcher/src-tauri
+
       - name: 构建 release exe
         run: cargo build --release
         working-directory: launcher/src-tauri
