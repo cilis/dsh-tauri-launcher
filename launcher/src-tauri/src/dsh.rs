@@ -268,19 +268,46 @@ pub async fn is_dsh_serving(port: u16) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
-    /// 本机已全局安装 @deepseek-ai/dsh：check() 必须能通过
-    /// `npm root -g` 找到它（回归测试：此前曾把 node_modules 拼接了两次）。
+    /// 环境变量注入互斥：避免并行测试互相污染 DSH_LAUNCHER_* 覆盖。
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// 环境无关的回归测试：借助 DSH_LAUNCHER_NODE / DSH_LAUNCHER_NPM_ROOT
+    /// 覆盖机制，在临时目录构造一个 fake 全局安装（含 package.json 与
+    /// lib/bin.js），验证 check() 能正确解析版本与入口（回归：此前曾把
+    /// node_modules 拼接了两次）。不依赖本机真实 npm 全局安装，CI 可跑。
     #[test]
-    fn check_detects_global_install() {
+    fn check_detects_install_from_injected_root() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        let fake_node = std::env::temp_dir().join("dsh-launcher-test-node.exe");
+        let fake_root = std::env::temp_dir().join("dsh-launcher-test-npm-root");
+        let pkg_dir = fake_root.join("node_modules").join(DSH_PACKAGE);
+        std::fs::create_dir_all(pkg_dir.join("lib")).expect("创建 fake 安装目录失败");
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            r#"{"name":"@deepseek-ai/dsh","version":"9.9.9-test"}"#,
+        )
+        .expect("写入 fake package.json 失败");
+        std::fs::write(pkg_dir.join("lib").join("bin.js"), "#!/usr/bin/env node
+")
+            .expect("写入 fake bin.js 失败");
+
+        std::env::set_var("DSH_LAUNCHER_NODE", &fake_node);
+        std::env::set_var("DSH_LAUNCHER_NPM_ROOT", &fake_root);
+
         let result = check();
         assert!(
             result.installed,
-            "check() 未检测到已安装的 DeepSeek Harness：root={:?} node_ok={} error={:?}",
+            "注入安装目录后 check() 应检测到安装：root={:?} node_ok={} error={:?}",
             result.root, result.node_ok, result.error
         );
-        assert!(result.version.is_some(), "检测到安装但未解析出版本号");
+        assert_eq!(result.version.as_deref(), Some("9.9.9-test"));
         let bin = result.bin_path.expect("bin_path 应存在");
         assert!(std::path::Path::new(&bin).exists(), "入口脚本不存在：{bin}");
+
+        std::env::remove_var("DSH_LAUNCHER_NODE");
+        std::env::remove_var("DSH_LAUNCHER_NPM_ROOT");
     }
 }
