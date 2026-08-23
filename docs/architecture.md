@@ -45,6 +45,12 @@
 快捷方式；确认失败走 `Stop-Process -Name dsh-launcher -Force` 强杀（TerminateProcess，
 不影响 Harness 进程）。
 
+桌面应用侧：勾选「退出时结束 Harness 进程」时，托盘/标记退出统一经 `begin_exit`
+——先销毁主窗口与设置窗口（`close_visible_windows`，屏幕上只留反馈窗口），再弹出
+紧凑 dialog 式独立 `exiting` 进度窗口（spinner + “正在退出 DeepSeek Harness 进程…”），
+然后在后台线程执行 taskkill 清理，避免同步终止阻塞 UI 导致动画白屏；未勾选（默认）
+则立即退出、不显示动画。
+
 ## 快捷方式联动
 
 - 快捷方式状态 = 桌面 `.lnk` 文件是否存在（与桌面应用自带设置同源，天然同步）；
