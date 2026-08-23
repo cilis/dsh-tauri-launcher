@@ -47,6 +47,8 @@ pub struct AppState {
     pub owned: AtomicBool,
     /// 已确认可用的 Web GUI 地址。
     pub url: Mutex<Option<String>>,
+    /// 退出流程是否已开始（幂等标记，防止重复显示退出动画/重复清理）。
+    pub exiting: AtomicBool,
     /// 子进程最近的输出（诊断用）。
     pub log_tail: Arc<Mutex<VecDeque<String>>>,
 }
@@ -298,8 +300,9 @@ fn show_settings(app: &AppHandle) -> tauri::Result<()> {
 /// 放弃对 dsh 子进程的托管（孤儿继续运行），并清空托管状态。同步版本。
 fn orphan_harness(app: &AppHandle) {
     let state = app.state::<AppState>();
-    {
-        let mut guard = state.child.blocking_lock();
+    // 用 try_lock 而非 blocking_lock：本函数可能在 tokio 异步上下文
+    // （标记轮询）被调用，阻塞锁会卡死 worker 线程。
+    if let Ok(mut guard) = state.child.try_lock() {
         if let Some(child) = guard.take() {
             // forget 阻止 drop 触发 kill_on_drop，孤儿继续运行；句柄由系统回收。
             std::mem::forget(child);
@@ -340,23 +343,81 @@ fn exit_launcher(app: &AppHandle) {
     }
 }
 
+/// 销毁主窗口与设置窗口（退出动画期间屏幕上只保留 exiting 进度窗口）。
+/// 必须用 destroy() 而非 close()：main/settings 的 CloseRequested 都注册了
+/// “隐藏到托盘”，close() 会被拦截；destroy() 绕过拦截直接销毁。
+fn close_visible_windows(app: &AppHandle) {
+    for label in ["main", "settings"] {
+        if let Some(w) = app.get_webview_window(label) {
+            let _ = w.destroy();
+        }
+    }
+}
+
+/// 显示“正在退出 DeepSeek Harness 进程”进度窗口（仅结束 Harness 时使用）。
+/// 主窗口会被导航到 DSH Web，故退出反馈用独立小窗口承载；重复调用直接跳过。
+fn show_exit_progress(app: &AppHandle) {
+    if app.get_webview_window("exiting").is_some() {
+        return;
+    }
+    let result = WebviewWindowBuilder::new(app, "exiting", WebviewUrl::App("exiting.html".into()))
+        .title("退出中")
+        .inner_size(320.0, 125.0)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .decorations(false)
+        .skip_taskbar(true)
+        .always_on_top(true)
+        .focused(false)
+        .center()
+        .build();
+    match result {
+        Ok(w) => {
+            let _ = w.set_icon(app_icon());
+        }
+        Err(e) => eprintln!("[launcher] 创建退出进度窗口失败：{e}"),
+    }
+}
+
+/// 统一退出入口：按“退出时结束 Harness”设置执行退出。
+/// 需要结束时先显示退出进度窗口，再在后台线程完成清理，
+/// 避免同步 taskkill 阻塞 UI 事件循环导致动画白屏。
+fn begin_exit(app: &AppHandle) {
+    if !load_config().terminate_harness_on_exit {
+        // 保留 Harness：退出很快，同样走后台任务，避免在异步上下文
+        // （标记轮询）内同步执行退出清理。
+        let handle = app.clone();
+        tauri::async_runtime::spawn(async move {
+            exit_launcher(&handle);
+            handle.exit(0);
+        });
+        return;
+    }
+    // 幂等：已在退出流程中（如 RunEvent::Exit 二次兜底）则仅做兜底清理。
+    let state = app.state::<AppState>();
+    if state
+        .exiting
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        exit_launcher(app);
+        return;
+    }
+    close_visible_windows(app);
+    show_exit_progress(app);
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        // 先让退出动画窗口渲染出首帧，再执行同步清理（taskkill / 端口兜底）。
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        exit_launcher(&handle);
+        handle.exit(0);
+    });
+}
+
 /// 响应“仅退出桌面应用”请求（`.dsh-quit` 标记）：按设置结束或保留 Harness。
 async fn quit_via_marker(app: &AppHandle) {
-    if load_config().terminate_harness_on_exit {
-        cleanup_on_exit(app);
-        kill_dsh_port_owner();
-    } else {
-        let state = app.state::<AppState>();
-        let mut guard = state.child.lock().await;
-        if let Some(child) = guard.take() {
-            std::mem::forget(child);
-        }
-        if let Ok(mut guard) = state.pid.lock() {
-            guard.take();
-        }
-        state.owned.store(false, Ordering::SeqCst);
-    }
-    app.exit(0);
+    begin_exit(app);
 }
 
 #[tauri::command]
@@ -657,8 +718,7 @@ pub fn run() {
                         }
                     }
                     "quit" => {
-                        exit_launcher(app);
-                        app.exit(0);
+                        begin_exit(app);
                     }
                     _ => {}
                 })

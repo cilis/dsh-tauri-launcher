@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>退出中</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <style>
+      /* 退出进度窗口：紧凑 dialog 样式，只承载中间的 phase 区域 */
+      #app {
+        padding: 0;
+      }
+      .exiting .card {
+        padding: 22px 28px 18px;
+        border-radius: 0;
+      }
+      .exiting .phase {
+        margin-top: 0;
+        min-height: 0;
+        gap: 10px;
+      }
+    </style>
+    <script>
+      // status/hint 均为纯展示文本（无任何逻辑引用），已合并为单行文案；
+      // 窗口高度与 .card 容器实际高度一致，避免小窗底部留白。
+      window.addEventListener("DOMContentLoaded", () => {
+        const card = document.querySelector(".card");
+        if (!card || !window.__TAURI__) return;
+        const h = Math.ceil(card.getBoundingClientRect().height);
+        if (h > 0) {
+          window.__TAURI__.window
+            .getCurrentWindow()
+            .setSize({ width: 320, height: h + 2 })
+            .catch(() => {});
+        }
+      });
+    </script>
+  </head>
+  <body class="exiting">
+    <main id="app">
+      <div class="card">
+        <div class="phase">
+          <div class="spinner"></div>
+          <p class="status">正在退出 DeepSeek Harness 进程，请稍候…</p>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>
