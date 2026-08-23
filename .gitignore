@@ -3,6 +3,7 @@ node_modules/
 
 # Rust / Tauri build output
 launcher/src-tauri/target/
+launcher/src-tauri/gen/
 
 # Logs
 *.log
