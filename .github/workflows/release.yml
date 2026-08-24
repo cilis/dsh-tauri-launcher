@@ -72,7 +72,7 @@ jobs:
           $body = "DeepSeek Harness 桌面启动器 $env:TAG（自动同步自 GitHub Release）"
           if ($rel) {
             $patch = @{ access_token = $env:GITEE_TOKEN; name = $env:TAG; body = $body } | ConvertTo-Json
-            $rel = Invoke-RestMethod -Method Patch -Uri "$base/releases/$($rel.id)" -Body $patch -ContentType 'application/json' -Headers $headers -TimeoutSec 30
+            $rel = Invoke-RestMethod -Method Patch -Uri "$base/releases/$($rel.id)" -Body $patch -ContentType 'application/json; charset=utf-8' -Headers $headers -TimeoutSec 30
             Write-Host "已更新 Gitee 发行版 $env:TAG (id=$($rel.id))"
           } else {
             $create = @{
@@ -82,7 +82,7 @@ jobs:
               body             = $body
               target_commitish = $env:TAG
             } | ConvertTo-Json
-            $rel = Invoke-RestMethod -Method Post -Uri "$base/releases" -Body $create -ContentType 'application/json' -Headers $headers -TimeoutSec 30
+            $rel = Invoke-RestMethod -Method Post -Uri "$base/releases" -Body $create -ContentType 'application/json; charset=utf-8' -Headers $headers -TimeoutSec 30
             Write-Host "已创建 Gitee 发行版 $env:TAG (id=$($rel.id))"
           }
 
@@ -115,7 +115,9 @@ jobs:
               }
             }
             if (-not $uploaded) {
-              # 上传成功但响应解析失败时，二次查询确认，避免误报失败。
+              # 上传成功但响应解析失败时，二次查询确认，避免误报失败；
+              # Gitee 附件列表存在短暂延迟，先等 10 秒再确认。
+              Start-Sleep -Seconds 10
               $confirm = @()
               try {
                 $r2 = Invoke-RestMethod -Uri "$base/releases/$($rel.id)/attach_files" -Headers $headers -TimeoutSec 30
@@ -128,7 +130,7 @@ jobs:
                 # （Actions 日志匿名不可读；成功路径的下次运行会覆盖回正常文案）。
                 try {
                   $errPatch = @{ access_token = $env:GITEE_TOKEN; body = "CI 附件上传失败: $lastErr" } | ConvertTo-Json
-                  Invoke-RestMethod -Method Patch -Uri "$base/releases/$($rel.id)" -Body $errPatch -ContentType 'application/json' -Headers $headers -TimeoutSec 30 | Out-Null
+                  Invoke-RestMethod -Method Patch -Uri "$base/releases/$($rel.id)" -Body $errPatch -ContentType 'application/json; charset=utf-8' -Headers $headers -TimeoutSec 30 | Out-Null
                 } catch {}
                 throw "附件上传失败: $lastErr"
               }
