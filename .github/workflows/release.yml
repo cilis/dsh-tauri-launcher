@@ -39,8 +39,8 @@ jobs:
           generate_release_notes: true
 
       # Gitee 镜像同步只携带 git 内容，发行版（Release）需经 API 单独创建。
-      # 未配置 GITEE_TOKEN 时本步骤告警后跳过，不影响 GitHub 发布。
-      # 注意：secrets 上下文不能用于 step 的 if 条件，故在 run 内判断 env。
+      # 未配置 GITEE_TOKEN 时告警跳过；Gitee API 偶发抖动，所有调用带重试，
+      # 描述更新为非致命项，附件上传失败会把原因写进发行版描述便于远程诊断。
       - name: 同步发行版到 Gitee
         shell: pwsh
         env:
@@ -55,43 +55,65 @@ jobs:
           $headers = @{ 'User-Agent' = 'dsh-release-sync' }
           $exe = 'launcher/src-tauri/target/release/dsh-launcher.exe'
 
-          # 1) Gitee 侧必须已同步该 tag（用户手动“强制同步”），否则跳过并告警。
-          $tags = (Invoke-RestMethod -Uri "$base/tags" -Headers $headers -TimeoutSec 30).name
-          if ($tags -notcontains $env:TAG) {
-            Write-Warning "Gitee 尚未同步 tag $env:TAG，请先在 Gitee 执行“强制同步”后重跑本工作流或手动补建发行版。"
+          function Invoke-Gitee {
+            param($Method, $Uri, $JsonBody, $Form, $Attempts = 3)
+            for ($i = 1; $i -le $Attempts; $i++) {
+              try {
+                $p = @{ Method = $Method; Uri = $Uri; Headers = $headers; TimeoutSec = 90; ErrorAction = 'Stop' }
+                if ($JsonBody) { $p.Body = $JsonBody; $p.ContentType = 'application/json; charset=utf-8' }
+                if ($Form) { $p.Form = $Form }
+                return Invoke-RestMethod @p
+              } catch {
+                if ($i -ge $Attempts) { throw }
+                Write-Host "第 $i 次调用失败: $($_.Exception.Message)，稍后重试..."
+                Start-Sleep -Seconds (5 * $i)
+              }
+            }
+          }
+
+          # 1) Gitee 侧必须已同步该 tag（用户手动『强制同步』），否则跳过并告警。
+          $tagList = Invoke-Gitee -Method Get -Uri "$base/tags"
+          $tagNames = @()
+          if ($tagList) { foreach ($t in @($tagList)) { $tagNames += $t.name } }
+          if ($tagNames -notcontains $env:TAG) {
+            Write-Warning "Gitee 尚未同步 tag $env:TAG，请先在 Gitee 执行『强制同步』后重跑本工作流或手动补建发行版。"
             exit 0
           }
 
-          # 2) 已存在同名发行版则更新，否则创建。
+          # 2) 已存在同名发行版则刷新描述（非致命），否则创建；随后重查保证 id 有效。
           $rel = $null
           try {
-            $rel = Invoke-RestMethod -Uri "$base/releases/tags/$env:TAG" -Headers $headers -TimeoutSec 30
+            $rel = Invoke-Gitee -Method Get -Uri "$base/releases/tags/$env:TAG"
           } catch {
             if ($_.Exception.Response.StatusCode.value__ -ne 404) { throw }
           }
-          $body = "DeepSeek Harness 桌面启动器 $env:TAG（自动同步自 GitHub Release）"
+          $bodyText = "DeepSeek Harness 桌面启动器 $env:TAG（自动同步自 GitHub Release）"
           if ($rel) {
-            $patch = @{ access_token = $env:GITEE_TOKEN; name = $env:TAG; body = $body } | ConvertTo-Json
-            $rel = Invoke-RestMethod -Method Patch -Uri "$base/releases/$($rel.id)" -Body $patch -ContentType 'application/json; charset=utf-8' -Headers $headers -TimeoutSec 30
-            Write-Host "已更新 Gitee 发行版 $env:TAG (id=$($rel.id))"
+            try {
+              $patchJson = @{ access_token = $env:GITEE_TOKEN; name = $env:TAG; body = $bodyText } | ConvertTo-Json
+              Invoke-Gitee -Method Patch -Uri "$base/releases/$($rel.id)?access_token=$($env:GITEE_TOKEN)" -JsonBody $patchJson | Out-Null
+            } catch {
+              Write-Host "更新发行版描述失败（忽略）: $($_.Exception.Message)"
+            }
+            $rel = Invoke-Gitee -Method Get -Uri "$base/releases/tags/$env:TAG"
+            Write-Host "Gitee 发行版已就绪 $env:TAG (id=$($rel.id))"
           } else {
-            $create = @{
+            $createJson = @{
               access_token     = $env:GITEE_TOKEN
               tag_name         = $env:TAG
               name             = $env:TAG
-              body             = $body
+              body             = $bodyText
               target_commitish = $env:TAG
             } | ConvertTo-Json
-            $rel = Invoke-RestMethod -Method Post -Uri "$base/releases" -Body $create -ContentType 'application/json; charset=utf-8' -Headers $headers -TimeoutSec 30
+            $rel = Invoke-Gitee -Method Post -Uri "$base/releases?access_token=$($env:GITEE_TOKEN)" -JsonBody $createJson
             Write-Host "已创建 Gitee 发行版 $env:TAG (id=$($rel.id))"
           }
+          if (-not $rel -or -not $rel.id) { throw "无法获取 Gitee 发行版 id，中止同步。" }
 
           # 3) 上传 exe 附件（已存在同名附件则跳过）。
-          #    注意：attach_files 无附件时可能返回 null，需强制数组化再取 name，
-          #    避免 $null.name 抛错导致“发行版已建但附件未传”的假失败。
           $names = @()
           try {
-            $resp = Invoke-RestMethod -Uri "$base/releases/$($rel.id)/attach_files" -Headers $headers -TimeoutSec 30
+            $resp = Invoke-Gitee -Method Get -Uri "$base/releases/$($rel.id)/attach_files"
             if ($resp) { foreach ($a in @($resp)) { $names += $a.name } }
           } catch { Write-Host "查询附件列表失败（忽略）: $($_.Exception.Message)" }
           if ($names -contains 'dsh-launcher.exe') {
@@ -101,11 +123,10 @@ jobs:
             $lastErr = ''
             foreach ($attempt in 1..2) {
               try {
-                # access_token 同时放查询参数与表单字段（Gitee 文档为查询参数）；
-                # token 仅出现在请求中，不会进入 Actions 日志摘要。
+                # access_token 同时放查询参数与表单字段（Gitee 文档为查询参数）。
                 $form = @{ access_token = $env:GITEE_TOKEN; file = Get-Item $exe }
                 $uri = "$base/releases/$($rel.id)/attach_files?access_token=$($env:GITEE_TOKEN)"
-                Invoke-RestMethod -Method Post -Uri $uri -Form $form -Headers $headers -TimeoutSec 300 | Out-Null
+                Invoke-Gitee -Method Post -Uri $uri -Form $form -Attempts 2 | Out-Null
                 $uploaded = $true
                 break
               } catch {
@@ -115,12 +136,12 @@ jobs:
               }
             }
             if (-not $uploaded) {
-              # 上传成功但响应解析失败时，二次查询确认，避免误报失败；
-              # Gitee 附件列表存在短暂延迟，先等 10 秒再确认。
+              # 上传调用可能『实际成功但响应异常』，延迟后二次确认；
+              # Gitee 附件列表存在短暂延迟。
               Start-Sleep -Seconds 10
               $confirm = @()
               try {
-                $r2 = Invoke-RestMethod -Uri "$base/releases/$($rel.id)/attach_files" -Headers $headers -TimeoutSec 30
+                $r2 = Invoke-Gitee -Method Get -Uri "$base/releases/$($rel.id)/attach_files"
                 if ($r2) { foreach ($a in @($r2)) { $confirm += $a.name } }
               } catch {}
               if ($confirm -contains 'dsh-launcher.exe') {
@@ -129,8 +150,8 @@ jobs:
                 # 把真实报错写进 Gitee 发行版描述，便于经公开 API 远程诊断
                 # （Actions 日志匿名不可读；成功路径的下次运行会覆盖回正常文案）。
                 try {
-                  $errPatch = @{ access_token = $env:GITEE_TOKEN; body = "CI 附件上传失败: $lastErr" } | ConvertTo-Json
-                  Invoke-RestMethod -Method Patch -Uri "$base/releases/$($rel.id)" -Body $errPatch -ContentType 'application/json; charset=utf-8' -Headers $headers -TimeoutSec 30 | Out-Null
+                  $errJson = @{ access_token = $env:GITEE_TOKEN; body = "CI 附件上传失败: $lastErr" } | ConvertTo-Json
+                  Invoke-Gitee -Method Patch -Uri "$base/releases/$($rel.id)?access_token=$($env:GITEE_TOKEN)" -JsonBody $errJson | Out-Null
                 } catch {}
                 throw "附件上传失败: $lastErr"
               }
