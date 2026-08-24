@@ -39,14 +39,18 @@ jobs:
           generate_release_notes: true
 
       # Gitee 镜像同步只携带 git 内容，发行版（Release）需经 API 单独创建。
-      # 未配置 GITEE_TOKEN 时本步骤自动跳过，不影响 GitHub 发布。
+      # 未配置 GITEE_TOKEN 时本步骤告警后跳过，不影响 GitHub 发布。
+      # 注意：secrets 上下文不能用于 step 的 if 条件，故在 run 内判断 env。
       - name: 同步发行版到 Gitee
-        if: secrets.GITEE_TOKEN != ''
         shell: pwsh
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
+          if (-not $env:GITEE_TOKEN) {
+            Write-Warning "未配置 GITEE_TOKEN secret（仓库 Settings -> Secrets -> Actions），跳过 Gitee 发行版同步。"
+            exit 0
+          }
           $base = 'https://gitee.com/api/v5/repos/cilis/dsh-tauri-launcher'
           $headers = @{ 'User-Agent' = 'dsh-release-sync' }
           $exe = 'launcher/src-tauri/target/release/dsh-launcher.exe'
