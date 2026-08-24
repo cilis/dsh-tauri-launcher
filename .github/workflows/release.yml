@@ -1,4 +1,5 @@
-# 打 v* tag 时自动构建 Windows 桌面应用并发布 GitHub Release。
+# 打 v* tag 时自动构建 Windows 桌面应用并发布 GitHub Release，
+# 并同步创建/更新 Gitee 镜像仓库的同名发行版（需配置 GITEE_TOKEN secret）。
 name: release
 
 on:
@@ -36,3 +37,57 @@ jobs:
         with:
           files: launcher/src-tauri/target/release/dsh-launcher.exe
           generate_release_notes: true
+
+      # Gitee 镜像同步只携带 git 内容，发行版（Release）需经 API 单独创建。
+      # 未配置 GITEE_TOKEN 时本步骤自动跳过，不影响 GitHub 发布。
+      - name: 同步发行版到 Gitee
+        if: secrets.GITEE_TOKEN != ''
+        shell: pwsh
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          $base = 'https://gitee.com/api/v5/repos/cilis/dsh-tauri-launcher'
+          $headers = @{ 'User-Agent' = 'dsh-release-sync' }
+          $exe = 'launcher/src-tauri/target/release/dsh-launcher.exe'
+
+          # 1) Gitee 侧必须已同步该 tag（用户手动“强制同步”），否则跳过并告警。
+          $tags = (Invoke-RestMethod -Uri "$base/tags" -Headers $headers -TimeoutSec 30).name
+          if ($tags -notcontains $env:TAG) {
+            Write-Warning "Gitee 尚未同步 tag $env:TAG，请先在 Gitee 执行“强制同步”后重跑本工作流或手动补建发行版。"
+            exit 0
+          }
+
+          # 2) 已存在同名发行版则更新，否则创建。
+          $rel = $null
+          try {
+            $rel = Invoke-RestMethod -Uri "$base/releases/tags/$env:TAG" -Headers $headers -TimeoutSec 30
+          } catch {
+            if ($_.Exception.Response.StatusCode.value__ -ne 404) { throw }
+          }
+          $body = "DeepSeek Harness 桌面启动器 $env:TAG（自动同步自 GitHub Release）"
+          if ($rel) {
+            $patch = @{ access_token = $env:GITEE_TOKEN; name = $env:TAG; body = $body } | ConvertTo-Json
+            $rel = Invoke-RestMethod -Method Patch -Uri "$base/releases/$($rel.id)" -Body $patch -ContentType 'application/json' -Headers $headers -TimeoutSec 30
+            Write-Host "已更新 Gitee 发行版 $env:TAG (id=$($rel.id))"
+          } else {
+            $create = @{
+              access_token     = $env:GITEE_TOKEN
+              tag_name         = $env:TAG
+              name             = $env:TAG
+              body             = $body
+              target_commitish = $env:TAG
+            } | ConvertTo-Json
+            $rel = Invoke-RestMethod -Method Post -Uri "$base/releases" -Body $create -ContentType 'application/json' -Headers $headers -TimeoutSec 30
+            Write-Host "已创建 Gitee 发行版 $env:TAG (id=$($rel.id))"
+          }
+
+          # 3) 上传 exe 附件（已存在同名附件则跳过）。
+          $attaches = (Invoke-RestMethod -Uri "$base/releases/$($rel.id)/attach_files" -Headers $headers -TimeoutSec 30)
+          if ($attaches.name -contains 'dsh-launcher.exe') {
+            Write-Host "附件 dsh-launcher.exe 已存在，跳过上传。"
+          } else {
+            $form = @{ access_token = $env:GITEE_TOKEN; file = Get-Item $exe }
+            Invoke-RestMethod -Method Post -Uri "$base/releases/$($rel.id)/attach_files" -Form $form -Headers $headers -TimeoutSec 180 | Out-Null
+            Write-Host "附件 dsh-launcher.exe 已上传。"
+          }
