@@ -97,13 +97,25 @@ jobs:
           if ($names -contains 'dsh-launcher.exe') {
             Write-Host "附件 dsh-launcher.exe 已存在，跳过上传。"
           } else {
-            try {
-              $form = @{ access_token = $env:GITEE_TOKEN; file = Get-Item $exe }
-              Invoke-RestMethod -Method Post -Uri "$base/releases/$($rel.id)/attach_files" -Form $form -Headers $headers -TimeoutSec 180 | Out-Null
-              Write-Host "附件 dsh-launcher.exe 已上传。"
-            } catch {
+            $uploaded = $false
+            $lastErr = ''
+            foreach ($attempt in 1..2) {
+              try {
+                # access_token 同时放查询参数与表单字段（Gitee 文档为查询参数）；
+                # token 仅出现在请求中，不会进入 Actions 日志摘要。
+                $form = @{ access_token = $env:GITEE_TOKEN; file = Get-Item $exe }
+                $uri = "$base/releases/$($rel.id)/attach_files?access_token=$($env:GITEE_TOKEN)"
+                Invoke-RestMethod -Method Post -Uri $uri -Form $form -Headers $headers -TimeoutSec 300 | Out-Null
+                $uploaded = $true
+                break
+              } catch {
+                $lastErr = $_.Exception.Message
+                Write-Host "第 $attempt 次上传失败: $lastErr"
+                Start-Sleep -Seconds 5
+              }
+            }
+            if (-not $uploaded) {
               # 上传成功但响应解析失败时，二次查询确认，避免误报失败。
-              Write-Host "上传调用异常（可能已成功）: $($_.Exception.Message)"
               $confirm = @()
               try {
                 $r2 = Invoke-RestMethod -Uri "$base/releases/$($rel.id)/attach_files" -Headers $headers -TimeoutSec 30
@@ -112,7 +124,15 @@ jobs:
               if ($confirm -contains 'dsh-launcher.exe') {
                 Write-Host "二次确认：附件已上传成功。"
               } else {
-                throw
+                # 把真实报错写进 Gitee 发行版描述，便于经公开 API 远程诊断
+                # （Actions 日志匿名不可读；成功路径的下次运行会覆盖回正常文案）。
+                try {
+                  $errPatch = @{ access_token = $env:GITEE_TOKEN; body = "CI 附件上传失败: $lastErr" } | ConvertTo-Json
+                  Invoke-RestMethod -Method Patch -Uri "$base/releases/$($rel.id)" -Body $errPatch -ContentType 'application/json' -Headers $headers -TimeoutSec 30 | Out-Null
+                } catch {}
+                throw "附件上传失败: $lastErr"
               }
+            } else {
+              Write-Host "附件 dsh-launcher.exe 已上传。"
             }
           }
