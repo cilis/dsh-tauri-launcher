@@ -283,12 +283,15 @@ fn show_settings(app: &AppHandle) -> tauri::Result<()> {
         let _ = w.set_focus();
         return Ok(());
     }
+    // 无边框：隐藏系统边框与标题栏。窗口拖动依赖页面元素上的
+    // data-tauri-drag-region（settings.html），关闭走页面「关闭」按钮（隐藏到托盘）。
     WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
         .title("设置")
         .inner_size(420.0, 540.0)
         .resizable(false)
         .maximizable(false)
         .minimizable(false)
+        .decorations(false)
         .center()
         .build()?;
     if let Some(w) = app.get_webview_window("settings") {
