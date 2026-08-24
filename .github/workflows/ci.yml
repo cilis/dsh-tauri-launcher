@@ -1,0 +1,44 @@
+# 分支/PR 验证流水线：新改动先在分支上验证（回归测试 + release 构建 +
+# exe 产物下载），绿灯后才经 PR 合入 main；push 到任何分支即触发，
+# 不必等 PR 建好；main 上的合并提交也会再跑一次兜底。
+# 产物用于人工冒烟验证：PR 页面底部 Artifacts 可下载 dsh-launcher.exe。
+name: ci
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 cargo 注册表
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: launcher/src-tauri
+
+      - name: 运行回归测试
+        run: cargo test
+        working-directory: launcher/src-tauri
+
+      - name: 构建 release exe
+        run: cargo build --release
+        working-directory: launcher/src-tauri
+
+      - name: 上传 exe 产物（供 PR 冒烟验证）
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-launcher-win-x64
+          path: launcher/src-tauri/target/release/dsh-launcher.exe
+          retention-days: 7
+          if-no-files-found: error
