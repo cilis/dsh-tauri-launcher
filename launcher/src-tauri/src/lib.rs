@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tauri::menu::{Menu, MenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
@@ -700,8 +700,21 @@ pub fn run() {
             }
             let show = MenuItem::with_id(app, "show", "打开 DeepSeek Harness", true, None::<&str>)?;
             let settings = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
+            // 版本信息项：禁用态（灰字、不可点击），运行时读取 tauri.conf.json 的版本号。
+            let version = MenuItem::with_id(
+                app,
+                "version",
+                format!("版本 v{}", app.package_info().version),
+                false,
+                None::<&str>,
+            )?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &settings, &quit])?;
+            let sep_above_version = PredefinedMenuItem::separator(app)?;
+            let sep_above_quit = PredefinedMenuItem::separator(app)?;
+            let menu = Menu::with_items(
+                app,
+                &[&show, &settings, &sep_above_version, &version, &sep_above_quit, &quit],
+            )?;
             TrayIconBuilder::with_id("main-tray")
                 .icon(icon)
                 .tooltip("DeepSeek Harness")
