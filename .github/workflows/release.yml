@@ -87,11 +87,32 @@ jobs:
           }
 
           # 3) 上传 exe 附件（已存在同名附件则跳过）。
-          $attaches = (Invoke-RestMethod -Uri "$base/releases/$($rel.id)/attach_files" -Headers $headers -TimeoutSec 30)
-          if ($attaches.name -contains 'dsh-launcher.exe') {
+          #    注意：attach_files 无附件时可能返回 null，需强制数组化再取 name，
+          #    避免 $null.name 抛错导致“发行版已建但附件未传”的假失败。
+          $names = @()
+          try {
+            $resp = Invoke-RestMethod -Uri "$base/releases/$($rel.id)/attach_files" -Headers $headers -TimeoutSec 30
+            if ($resp) { foreach ($a in @($resp)) { $names += $a.name } }
+          } catch { Write-Host "查询附件列表失败（忽略）: $($_.Exception.Message)" }
+          if ($names -contains 'dsh-launcher.exe') {
             Write-Host "附件 dsh-launcher.exe 已存在，跳过上传。"
           } else {
-            $form = @{ access_token = $env:GITEE_TOKEN; file = Get-Item $exe }
-            Invoke-RestMethod -Method Post -Uri "$base/releases/$($rel.id)/attach_files" -Form $form -Headers $headers -TimeoutSec 180 | Out-Null
-            Write-Host "附件 dsh-launcher.exe 已上传。"
+            try {
+              $form = @{ access_token = $env:GITEE_TOKEN; file = Get-Item $exe }
+              Invoke-RestMethod -Method Post -Uri "$base/releases/$($rel.id)/attach_files" -Form $form -Headers $headers -TimeoutSec 180 | Out-Null
+              Write-Host "附件 dsh-launcher.exe 已上传。"
+            } catch {
+              # 上传成功但响应解析失败时，二次查询确认，避免误报失败。
+              Write-Host "上传调用异常（可能已成功）: $($_.Exception.Message)"
+              $confirm = @()
+              try {
+                $r2 = Invoke-RestMethod -Uri "$base/releases/$($rel.id)/attach_files" -Headers $headers -TimeoutSec 30
+                if ($r2) { foreach ($a in @($r2)) { $confirm += $a.name } }
+              } catch {}
+              if ($confirm -contains 'dsh-launcher.exe') {
+                Write-Host "二次确认：附件已上传成功。"
+              } else {
+                throw
+              }
+            }
           }
