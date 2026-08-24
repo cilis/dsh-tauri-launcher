@@ -7,9 +7,11 @@
     <link rel="stylesheet" href="./settings.css" />
     <script src="./settings.js" defer></script>
   </head>
-  <body>
-    <main class="settings">
-      <h1>设置</h1>
+  <!-- 无边框窗口：body/main/h1 挂 drag-region 作为不可见拖动热区，
+       仅命中带属性的元素本身，开关/按钮等子元素交互不受影响 -->
+  <body data-tauri-drag-region>
+    <main class="settings" data-tauri-drag-region>
+      <h1 data-tauri-drag-region>设置</h1>
 
       <section class="row">
         <div class="info">
