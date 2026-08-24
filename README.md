@@ -103,7 +103,7 @@ dsh plugin --profile web add github:cilis/dsh-tauri-launcher
 
 # 3) 本地 checkout / tarball
 dsh plugin --profile web add ./dsh-tauri-launcher
-dsh plugin --profile web add ./dsh-tauri-launcher-1.0.1.tgz
+dsh plugin --profile web add ./dsh-tauri-launcher-1.0.3.tgz
 ```
 
 > 如果你有多个 profile，把命令里的 `web` 换成目标 profile 名即可。

@@ -108,7 +108,7 @@ dsh plugin --profile web add github:cilis/dsh-tauri-launcher
 
 # 3) Local checkout / tarball
 dsh plugin --profile web add ./dsh-tauri-launcher
-dsh plugin --profile web add ./dsh-tauri-launcher-1.0.1.tgz
+dsh plugin --profile web add ./dsh-tauri-launcher-1.0.3.tgz
 ```
 
 > If you have multiple profiles, replace `web` in the commands with the target profile name.

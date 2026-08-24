@@ -11,7 +11,7 @@ dsh plugin --profile <profile> add github:cilis/dsh-tauri-launcher
 
 # 本地 checkout / tarball
 dsh plugin --profile <profile> add ./dsh-tauri-launcher
-dsh plugin --profile <profile> add ./dsh-tauri-launcher-1.0.1.tgz
+dsh plugin --profile <profile> add ./dsh-tauri-launcher-1.0.3.tgz
 ```
 
 验证组合层（应看到 `# == dsh-tauri-launcher` 层）：
