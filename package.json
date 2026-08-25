@@ -19,6 +19,10 @@
     "type": "git",
     "url": "git+https://github.com/cilis/dsh-tauri-launcher.git"
   },
+  "homepage": "https://github.com/cilis/dsh-tauri-launcher#readme",
+  "bugs": {
+    "url": "https://github.com/cilis/dsh-tauri-launcher/issues"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
