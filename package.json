@@ -15,6 +15,10 @@
     "launcher/bin",
     "README.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cilis/dsh-tauri-launcher.git"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
