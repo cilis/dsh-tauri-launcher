@@ -27,13 +27,73 @@ const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 const RUN_NAME: &str = "DeepSeekHarness";
 /// 全局快捷键（按下即唤起主窗口）。设置窗口勾选=注册，取消=注销。
 const HOTKEY: &str = "ctrl+shift+h";
-/// 应用图标源（512×512 PNG，编译期内嵌）：托盘/窗口/任务栏共用，
+/// 单色图标变体（512×512 PNG，编译期内嵌）：托盘/窗口/任务栏共用，
 /// 避免 Tauri 默认 32×32 窗口图标在高 DPI 下被非整数缩放而发虚。
-const APP_ICON_BYTES: &[u8] = include_bytes!("../icons/icon.png");
+/// - `icon-black.png`：黑色前景，对应系统浅色主题（亮底任务栏可见）。
+/// - `icon-white.png`：白色前景，对应系统深色主题（暗底任务栏可见）。
+/// 两个文件保留原始 alpha 通道（形状与原 icons/icon.png 一致），仅 RGB 通道分别置 0 / 255。
+/// 原 `icons/icon.png` 仍由 `tauri::generate_context!()` 用于安装包图标 / 资源管理器大图标。
+const ICON_BLACK_BYTES: &[u8] = include_bytes!("../icons/icon-black.png");
+const ICON_WHITE_BYTES: &[u8] = include_bytes!("../icons/icon-white.png");
 
-/// 解码内嵌的应用图标。
-fn app_icon() -> tauri::image::Image<'static> {
-    tauri::image::Image::from_bytes(APP_ICON_BYTES).expect("应用图标解码失败")
+/// 按当前系统主题挑选单色图标：浅色系统返回黑图标，深色系统返回白图标。
+fn icon_for_theme(light: bool) -> tauri::image::Image<'static> {
+    let bytes = if light { ICON_BLACK_BYTES } else { ICON_WHITE_BYTES };
+    tauri::image::Image::from_bytes(bytes).expect("单色图标解码失败")
+}
+
+/// 当前 Windows 系统是否使用浅色主题。
+/// 读取 `HKCU\...\Themes\Personalize\AppsUseLightTheme`：0=深色，1=浅色；
+/// 缺失/失败默认浅色，与历史行为兼容。非 Windows 平台始终视为浅色（图标退化为黑）。
+fn is_light_theme() -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let out = StdCommand::new("reg")
+            .args([
+                "query",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+                "/v",
+                "AppsUseLightTheme",
+            ])
+            .creation_flags(0x0800_0000)
+            .output();
+        match out {
+            Ok(o) if o.status.success() => {
+                let s = String::from_utf8_lossy(&o.stdout);
+                // 输出形如 `AppsUseLightTheme    REG_DWORD    0x0`；只看末位 0x0 还是 0x1。
+                if s.contains("0x0") {
+                    false
+                } else {
+                    // 含 0x1 或无法解析 → 默认浅色（兼容缺键场景）
+                    true
+                }
+            }
+            _ => true,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        true
+    }
+}
+
+/// 把当前主题对应的单色图标应用到托盘和所有已知窗口。
+/// 失败仅日志，不中断调用方（轮询任务下次会再尝试）。
+fn apply_theme_icons(app: &AppHandle, light: bool) {
+    let img = icon_for_theme(light);
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        if let Err(e) = tray.set_icon(Some(img.clone())) {
+            eprintln!("[launcher] 切换托盘图标失败：{e}");
+        }
+    }
+    for label in ["main", "settings", "exiting"] {
+        if let Some(w) = app.get_webview_window(label) {
+            if let Err(e) = w.set_icon(img.clone()) {
+                eprintln!("[launcher] 切换 {label} 窗口图标失败：{e}");
+            }
+        }
+    }
 }
 
 /// 应用全局状态：被托管的 dsh 子进程及其诊断信息。
@@ -295,7 +355,7 @@ fn show_settings(app: &AppHandle) -> tauri::Result<()> {
         .center()
         .build()?;
     if let Some(w) = app.get_webview_window("settings") {
-        let _ = w.set_icon(app_icon());
+        let _ = w.set_icon(icon_for_theme(is_light_theme()));
     }
     Ok(())
 }
@@ -377,7 +437,7 @@ fn show_exit_progress(app: &AppHandle) {
         .build();
     match result {
         Ok(w) => {
-            let _ = w.set_icon(app_icon());
+            let _ = w.set_icon(icon_for_theme(is_light_theme()));
         }
         Err(e) => eprintln!("[launcher] 创建退出进度窗口失败：{e}"),
     }
@@ -693,8 +753,10 @@ pub fn run() {
             close_settings
         ])
         .setup(|app| {
+            // 启动时按系统主题选择托盘/窗口图标，浅色系统用黑图标、深色系统用白图标。
             // 高分辨率图标：托盘与窗口（任务栏/标题栏）统一从 512×512 源缩放。
-            let icon = app_icon();
+            let light = is_light_theme();
+            let icon = icon_for_theme(light);
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_icon(icon.clone());
             }
@@ -748,6 +810,9 @@ pub fn run() {
                 }
             }
 
+            // 主题任务独立拿一份克隆，与心跳 / 退出标记任务互不耦合。
+            let theme_handle = handle.clone();
+
             // 标记文件轮询：心跳 + 响应“仅退出桌面应用”请求（每秒一次，
             // 退出标记消费延迟 ≤1 秒；插件侧的心跳“新鲜窗口”须与之匹配）。
             tauri::async_runtime::spawn(async move {
@@ -784,6 +849,23 @@ pub fn run() {
                             quit_via_marker(&handle).await;
                             break;
                         }
+                    }
+                }
+            });
+
+            // 主题轮询：每 2 秒检测一次 Windows 系统主题，与上次相同则跳过；
+            // 不侵入心跳任务（心跳 1s 用于标记文件，主题 2s 单独成任务）。
+            tauri::async_runtime::spawn(async move {
+                let mut tick = tokio::time::interval(Duration::from_secs(2));
+                // 跳过首次立即触发（启动时已按当前主题建好图标）
+                tick.tick().await;
+                let mut last_light = is_light_theme();
+                loop {
+                    tick.tick().await;
+                    let now = is_light_theme();
+                    if now != last_light {
+                        last_light = now;
+                        apply_theme_icons(&theme_handle, now);
                     }
                 }
             });
