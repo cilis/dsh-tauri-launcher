@@ -335,7 +335,29 @@ fn set_desktop_shortcut(enabled: bool) -> bool {
     desktop_shortcut_exists() == enabled
 }
 
-/// 打开设置窗口（首次点击时创建，之后显示已存在的实例）。
+/// 创建设置窗口（预建后隐藏）。
+/// 关键约束：主窗口 iframe 加载跨源 DSH 之后，主线程同步 build 第二个
+/// webview 窗口会死锁（WebView2 多窗口竞态，实测 build() 永不返回、事件
+/// 循环停摆）。因此设置窗口必须在启动早期预建（visible(false) 防闪现），
+/// 之后一律复用实例（见 show_settings）。
+fn create_settings_window(app: &AppHandle) -> tauri::Result<()> {
+    let built = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
+        .title("设置")
+        .inner_size(420.0, 540.0)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .decorations(false)
+        // 预建不可见：避免启动时窗口闪现一帧；首次 show() 才亮相
+        .visible(false)
+        .center()
+        .build()?;
+    let _ = built.set_icon(icon_for_theme(is_light_theme()));
+    let _ = built.hide();
+    Ok(())
+}
+
+/// 打开设置窗口（显示预建实例；兜底分支正常流程不会走到）。
 fn show_settings(app: &AppHandle) -> tauri::Result<()> {
     if let Some(w) = app.get_webview_window("settings") {
         let _ = w.show();
@@ -343,19 +365,11 @@ fn show_settings(app: &AppHandle) -> tauri::Result<()> {
         let _ = w.set_focus();
         return Ok(());
     }
-    // 无边框：隐藏系统边框与标题栏。窗口拖动依赖页面元素上的
-    // data-tauri-drag-region（settings.html），关闭走页面「关闭」按钮（隐藏到托盘）。
-    WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
-        .title("设置")
-        .inner_size(420.0, 540.0)
-        .resizable(false)
-        .maximizable(false)
-        .minimizable(false)
-        .decorations(false)
-        .center()
-        .build()?;
+    create_settings_window(app)?;
     if let Some(w) = app.get_webview_window("settings") {
-        let _ = w.set_icon(icon_for_theme(is_light_theme()));
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
     }
     Ok(())
 }
@@ -595,6 +609,44 @@ fn close_settings(app: AppHandle) {
     }
 }
 
+/// 主窗口自绘标题栏菜单：打开设置窗口（显示预建实例）。
+#[tauri::command]
+fn open_settings_window(app: AppHandle) {
+    if let Err(e) = show_settings(&app) {
+        eprintln!("[launcher] 打开设置窗口失败：{e}");
+    }
+}
+
+/// 主窗口自绘标题栏菜单：用系统默认浏览器打开 DSH Web。
+/// 经 explorer.exe 打开（不走 cmd shell），URL 无解释执行风险；
+/// 只接受本地 DSH 地址前缀，防御性校验。
+#[tauri::command]
+fn open_in_browser(url: String) -> Result<(), String> {
+    if !url.starts_with(dsh::DSH_URL) {
+        return Err(format!(
+            "仅允许打开本地 DeepSeek Harness 地址（{}/…）。",
+            dsh::DSH_URL
+        ));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        StdCommand::new("explorer")
+            .arg(url)
+            .creation_flags(0x0800_0000)
+            .spawn()
+            .map_err(|e| format!("调用系统浏览器失败：{e}"))?;
+    }
+    Ok(())
+}
+
+/// 主窗口自绘标题栏菜单：退出应用（与托盘「退出」同一条 begin_exit 路径，
+/// 含退出动画与“是否结束 Harness”设置逻辑）。
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    begin_exit(&app);
+}
+
 /// 确保 DeepSeek Harness 已启动并返回可访问的 Web GUI 地址。
 /// 若默认端口上已有实例在运行则直接接管；否则拉起 `dsh web` 并等待就绪。
 #[tauri::command]
@@ -750,7 +802,10 @@ pub fn run() {
             set_global_shortcut_setting,
             set_desktop_shortcut_setting,
             set_terminate_harness_on_exit_setting,
-            close_settings
+            close_settings,
+            open_settings_window,
+            open_in_browser,
+            quit_app
         ])
         .setup(|app| {
             // 启动时按系统主题选择托盘/窗口图标，浅色系统用黑图标、深色系统用白图标。
@@ -812,6 +867,13 @@ pub fn run() {
 
             // 主题任务独立拿一份克隆，与心跳 / 退出标记任务互不耦合。
             let theme_handle = handle.clone();
+
+            // 预建设置窗口（创建后隐藏）：必须在主窗口 iframe 加载 DSH 之前完成，
+            // 否则主线程同步 build 第二个 webview 会死锁（见 create_settings_window 注释）。
+            let pre = app.handle().clone();
+            if let Err(e) = create_settings_window(&pre) {
+                eprintln!("[launcher] 预建设置窗口失败：{e}");
+            }
 
             // 标记文件轮询：心跳 + 响应“仅退出桌面应用”请求（每秒一次，
             // 退出标记消费延迟 ≤1 秒；插件侧的心跳“新鲜窗口”须与之匹配）。
