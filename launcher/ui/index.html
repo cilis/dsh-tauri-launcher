@@ -60,5 +60,32 @@
         <p class="footer">关闭窗口将最小化到系统托盘，通过托盘菜单可退出应用</p>
       </div>
     </main>
+
+    <!-- 自定义标题栏：DSH 就绪后才显示（启动阶段无栏） -->
+    <header id="titlebar" class="hidden" data-tauri-drag-region>
+      <span class="tb-title" data-tauri-drag-region>DeepSeek Harness</span>
+      <div class="menu-anchor">
+        <button id="menu-btn" title="菜单" aria-haspopup="true">⋯</button>
+        <div id="menu-panel" class="hidden" role="menu">
+          <button class="menu-item" id="menu-settings" role="menuitem">设置</button>
+          <button class="menu-item" id="menu-reload" role="menuitem">重新加载页面</button>
+          <button class="menu-item" id="menu-browser" role="menuitem">在浏览器中打开</button>
+          <div class="menu-sep"></div>
+          <button class="menu-item menu-danger" id="menu-quit" role="menuitem">退出</button>
+        </div>
+      </div>
+      <div class="tb-spacer" data-tauri-drag-region></div>
+      <div class="win-btns">
+        <button id="btn-min" title="最小化"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor" stroke-width="1"/></svg></button>
+        <button id="btn-max" title="最大化 / 还原">
+          <svg class="ic-max" width="10" height="10" viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor"/></svg>
+          <svg class="ic-restore hidden" width="10" height="10" viewBox="0 0 10 10"><rect x="2.5" y="0.5" width="7" height="7" fill="none" stroke="currentColor"/><rect x="0.5" y="2.5" width="7" height="7" fill="#f9fafb" stroke="currentColor"/></svg>
+        </button>
+        <button id="btn-close" title="关闭"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor" stroke-width="1"/></svg></button>
+      </div>
+    </header>
+
+    <!-- DSH 承载区：整页跳转改为 iframe，标题栏得以常驻 -->
+    <iframe id="dsh-frame" class="hidden" title="DeepSeek Harness"></iframe>
   </body>
 </html>
