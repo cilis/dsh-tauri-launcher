@@ -29,9 +29,9 @@ const RUN_NAME: &str = "DeepSeekHarness";
 const HOTKEY: &str = "ctrl+shift+h";
 /// 单色图标变体（512×512 PNG，编译期内嵌）：托盘/窗口/任务栏共用，
 /// 避免 Tauri 默认 32×32 窗口图标在高 DPI 下被非整数缩放而发虚。
-/// - `icon-black.png`：黑色前景，对应系统浅色主题（亮底任务栏可见）。
+/// - `icon-black.png`：RGB(15,17,21) 近黑前景，对应系统浅色主题（亮底任务栏可见）。
 /// - `icon-white.png`：白色前景，对应系统深色主题（暗底任务栏可见）。
-/// 两个文件保留原始 alpha 通道（形状与原 icons/icon.png 一致），仅 RGB 通道分别置 0 / 255。
+/// 两个文件保留原始 alpha 通道（形状与原 icons/icon.png 一致），仅替换 RGB 通道。
 /// 原 `icons/icon.png` 仍由 `tauri::generate_context!()` 用于安装包图标 / 资源管理器大图标。
 const ICON_BLACK_BYTES: &[u8] = include_bytes!("../icons/icon-black.png");
 const ICON_WHITE_BYTES: &[u8] = include_bytes!("../icons/icon-white.png");
