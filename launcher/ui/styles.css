@@ -192,6 +192,8 @@ body {
 
 /* ============ 自定义标题栏（仅 DSH 界面期间显示） ============ */
 
+/* 标题栏配色全部走 --tb-* CSS 变量（main.js 按主题写入；var 默认值 = 浅色） */
+
 #titlebar {
   position: fixed;
   top: 0;
@@ -201,8 +203,8 @@ body {
   z-index: 100;
   display: flex;
   align-items: stretch;
-  background: #f9fafb;
-  color: #1f2937;
+  background: var(--tb-bg, #f9fafb);
+  color: var(--tb-fg, #1f2937);
 }
 
 #titlebar.hidden {
@@ -215,7 +217,7 @@ body {
   padding: 0 12px;
   font-size: 13px;
   font-weight: 600;
-  color: #111827;
+  color: var(--tb-title-fg, #111827);
   pointer-events: none;
 }
 
@@ -234,7 +236,7 @@ body {
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: #1f2937;
+  color: var(--tb-fg, #1f2937);
   font-size: 16px;
   line-height: 1;
   cursor: default;
@@ -243,7 +245,7 @@ body {
 
 #menu-btn:hover,
 #menu-btn.open {
-  background: rgba(17, 24, 39, 0.08);
+  background: var(--tb-hover, rgba(17, 24, 39, 0.08));
 }
 
 #menu-panel {
@@ -251,10 +253,10 @@ body {
   top: 34px;
   left: 0;
   min-width: 180px;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
+  background: var(--tb-menu-bg, #ffffff);
+  border: 1px solid var(--tb-menu-border, #e5e7eb);
   border-radius: 10px;
-  box-shadow: 0 10px 34px rgba(15, 23, 42, 0.14);
+  box-shadow: var(--tb-menu-shadow, 0 10px 34px rgba(15, 23, 42, 0.14));
   padding: 6px;
   z-index: 200;
 }
@@ -267,23 +269,23 @@ body {
   border: none;
   border-radius: 7px;
   background: transparent;
-  color: #1f2937;
+  color: var(--tb-fg, #1f2937);
   font-size: 13px;
   cursor: default;
 }
 
 .menu-item:hover {
-  background: rgba(17, 24, 39, 0.06);
+  background: var(--tb-hover, rgba(17, 24, 39, 0.08));
 }
 
 .menu-danger {
-  color: #dc2626;
+  color: var(--tb-danger, #dc2626);
 }
 
 .menu-sep {
   height: 1px;
   margin: 5px 8px;
-  background: #e5e7eb;
+  background: var(--tb-sep, #e5e7eb);
 }
 
 .tb-spacer {
@@ -299,7 +301,7 @@ body {
   width: 46px;
   border: none;
   background: transparent;
-  color: #1f2937;
+  color: var(--tb-fg, #1f2937);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -307,12 +309,12 @@ body {
 }
 
 .win-btns button:hover {
-  background: rgba(17, 24, 39, 0.08);
+  background: var(--tb-hover, rgba(17, 24, 39, 0.08));
 }
 
 #btn-close:hover {
-  background: #e81123;
-  color: #fff;
+  background: var(--tb-close-hover-bg, #e81123);
+  color: var(--tb-close-hover-fg, #fff);
 }
 
 .win-btns button svg {

@@ -160,6 +160,91 @@
     void refreshMaxGlyph();
   }
 
+  /* ---------- 标题栏主题跟随（DSH 浅/深） ---------- */
+
+  const TB_PALETTES = {
+    light: {
+      bg: "#f9fafb",
+      fg: "#1f2937",
+      titleFg: "#111827",
+      hover: "rgba(17, 24, 39, 0.08)",
+      menuBg: "#ffffff",
+      menuBorder: "#e5e7eb",
+      menuShadow: "0 10px 34px rgba(15, 23, 42, 0.14)",
+      sep: "#e5e7eb",
+      danger: "#dc2626",
+      closeHoverBg: "#e81123",
+      closeHoverFg: "#ffffff",
+    },
+    dark: {
+      bg: "#0b0f17",
+      fg: "#e5eaf2",
+      titleFg: "#f3f6fb",
+      hover: "rgba(255, 255, 255, 0.08)",
+      menuBg: "#151c29",
+      menuBorder: "rgba(148, 180, 220, 0.16)",
+      menuShadow: "0 10px 34px rgba(0, 0, 0, 0.5)",
+      sep: "rgba(148, 180, 220, 0.14)",
+      danger: "#f87171",
+      closeHoverBg: "#e81123",
+      closeHoverFg: "#ffffff",
+    },
+  };
+
+  // 插件主题到达后即以 DSH 为准，系统主题兜底不再介入
+  let pluginThemeApplied = false;
+
+  function applyTitlebarTheme(mode, bgOverride) {
+    const p = TB_PALETTES[mode === "dark" ? "dark" : "light"];
+    const s = document.documentElement.style;
+    s.setProperty("--tb-bg", bgOverride || p.bg);
+    s.setProperty("--tb-fg", p.fg);
+    s.setProperty("--tb-title-fg", p.titleFg);
+    s.setProperty("--tb-hover", p.hover);
+    s.setProperty("--tb-menu-bg", p.menuBg);
+    s.setProperty("--tb-menu-border", p.menuBorder);
+    s.setProperty("--tb-menu-shadow", p.menuShadow);
+    s.setProperty("--tb-sep", p.sep);
+    s.setProperty("--tb-danger", p.danger);
+    s.setProperty("--tb-close-hover-bg", p.closeHoverBg);
+    s.setProperty("--tb-close-hover-fg", p.closeHoverFg);
+  }
+
+  function setupThemeFollow() {
+    // 主通道：Web 插件（运行在 DSH iframe 里）中继官方主题服务的解析结果
+    window.addEventListener("message", (event) => {
+      const data = event.data;
+      if (!data || data.__dshLauncherTheme !== 1) return;
+      if (!frameUrl) return;
+      try {
+        if (event.origin !== new URL(frameUrl).origin) return;
+      } catch {
+        return;
+      }
+      const bg =
+        typeof data.bg === "string" &&
+        data.bg.length >= 3 &&
+        data.bg.length <= 64 &&
+        /^[#a-zA-Z0-9(),.\s%-]+$/.test(data.bg)
+          ? data.bg
+          : "";
+      pluginThemeApplied = true;
+      applyTitlebarTheme(data.scheme, bg || undefined);
+    });
+
+    // 兜底：插件未运行（未安装 / DSH 在普通浏览器打开）→ 跟随 Windows 系统主题
+    if (window.matchMedia) {
+      const mq = window.matchMedia("(prefers-color-scheme: dark)");
+      const onScheme = () => {
+        if (!pluginThemeApplied) applyTitlebarTheme(mq.matches ? "dark" : "light");
+      };
+      if (mq.addEventListener) mq.addEventListener("change", onScheme);
+      onScheme();
+    } else {
+      applyTitlebarTheme("light");
+    }
+  }
+
   function clearUnlisten() {
     if (unlisten) {
       unlisten();
@@ -232,6 +317,7 @@
 
   window.addEventListener("DOMContentLoaded", () => {
     setupTitlebar();
+    setupThemeFollow();
     document.getElementById("retry-btn")?.addEventListener("click", () => {
       const log = document.getElementById("install-log");
       if (log) log.innerHTML = "";
