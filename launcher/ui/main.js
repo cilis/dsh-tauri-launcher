@@ -161,31 +161,33 @@
   }
 
   /* ---------- 标题栏主题跟随（DSH 浅/深） ---------- */
+  // 色板为 DSH 官方设计 token 的真实值（浅/深两套），仅作兜底：
+  // 插件在线时以它发来的计算样式逐项覆盖（--tb-* 全部取 DSH 实际生效色）。
 
   const TB_PALETTES = {
     light: {
-      bg: "#f9fafb",
-      fg: "#1f2937",
-      titleFg: "#111827",
+      bg: "#f9fafb", // --dsw-specific-sidebar-fill: bluish-50
+      fg: "#0f1115", // --dsw-alias-label-primary: bluish-1000
+      titleFg: "#0f1115",
       hover: "rgba(17, 24, 39, 0.08)",
-      menuBg: "#ffffff",
-      menuBorder: "#e5e7eb",
+      menuBg: "#e9ecf2", // --dsw-alias-bg-overlay: bluish-150
+      menuBorder: "rgba(0, 0, 0, 0.10)", // --dsw-alias-border-l2: #0000001a
       menuShadow: "0 10px 34px rgba(15, 23, 42, 0.14)",
-      sep: "#e5e7eb",
-      danger: "#dc2626",
+      sep: "rgba(0, 0, 0, 0.04)", // --dsw-alias-border-l1: #0000000a
+      danger: "#ec1313", // --dsw-alias-state-error-primary: red-600
       closeHoverBg: "#e81123",
       closeHoverFg: "#ffffff",
     },
     dark: {
-      bg: "#0b0f17",
-      fg: "#e5eaf2",
-      titleFg: "#f3f6fb",
+      bg: "#1b1b1c", // --dsw-specific-sidebar-fill: bluish-900
+      fg: "#f9fafb", // --dsw-alias-label-primary: bluish-50
+      titleFg: "#f9fafb",
       hover: "rgba(255, 255, 255, 0.08)",
-      menuBg: "#151c29",
-      menuBorder: "rgba(148, 180, 220, 0.16)",
+      menuBg: "#61666b", // --dsw-alias-bg-overlay: bluish-700
+      menuBorder: "rgba(255, 255, 255, 0.12)", // --dsw-alias-border-l2: #ffffff1f
       menuShadow: "0 10px 34px rgba(0, 0, 0, 0.5)",
-      sep: "rgba(148, 180, 220, 0.14)",
-      danger: "#f87171",
+      sep: "rgba(255, 255, 255, 0.06)", // --dsw-alias-border-l1: #ffffff0f
+      danger: "#f25a5a", // --dsw-alias-state-error-primary: red-400
       closeHoverBg: "#e81123",
       closeHoverFg: "#ffffff",
     },
@@ -194,18 +196,29 @@
   // 插件主题到达后即以 DSH 为准，系统主题兜底不再介入
   let pluginThemeApplied = false;
 
-  function applyTitlebarTheme(mode, bgOverride) {
+  // 颜色值来自插件消息（可信来源），只做基本形状校验；非法值回退色板
+  const pickColor = (value, fallback) =>
+    typeof value === "string" &&
+    value.length >= 3 &&
+    value.length <= 64 &&
+    !value.includes("var(") &&
+    /^[#a-zA-Z0-9(),.\s%-]+$/.test(value)
+      ? value
+      : fallback;
+
+  function applyTitlebarTheme(mode, overrides) {
     const p = TB_PALETTES[mode === "dark" ? "dark" : "light"];
+    const ov = overrides || {};
     const s = document.documentElement.style;
-    s.setProperty("--tb-bg", bgOverride || p.bg);
-    s.setProperty("--tb-fg", p.fg);
-    s.setProperty("--tb-title-fg", p.titleFg);
+    s.setProperty("--tb-bg", pickColor(ov.bg, p.bg));
+    s.setProperty("--tb-fg", pickColor(ov.fg, p.fg));
+    s.setProperty("--tb-title-fg", pickColor(ov.fg, p.titleFg));
     s.setProperty("--tb-hover", p.hover);
-    s.setProperty("--tb-menu-bg", p.menuBg);
-    s.setProperty("--tb-menu-border", p.menuBorder);
+    s.setProperty("--tb-menu-bg", pickColor(ov.menuBg, p.menuBg));
+    s.setProperty("--tb-menu-border", pickColor(ov.menuBorder, p.menuBorder));
     s.setProperty("--tb-menu-shadow", p.menuShadow);
-    s.setProperty("--tb-sep", p.sep);
-    s.setProperty("--tb-danger", p.danger);
+    s.setProperty("--tb-sep", pickColor(ov.sep, p.sep));
+    s.setProperty("--tb-danger", pickColor(ov.danger, p.danger));
     s.setProperty("--tb-close-hover-bg", p.closeHoverBg);
     s.setProperty("--tb-close-hover-fg", p.closeHoverFg);
   }
@@ -221,15 +234,15 @@
       } catch {
         return;
       }
-      const bg =
-        typeof data.bg === "string" &&
-        data.bg.length >= 3 &&
-        data.bg.length <= 64 &&
-        /^[#a-zA-Z0-9(),.\s%-]+$/.test(data.bg)
-          ? data.bg
-          : "";
       pluginThemeApplied = true;
-      applyTitlebarTheme(data.scheme, bg || undefined);
+      applyTitlebarTheme(data.scheme, {
+        bg: data.bg,
+        fg: data.fg,
+        menuBg: data.menuBg,
+        menuBorder: data.menuBorder,
+        sep: data.sep,
+        danger: data.danger,
+      });
     });
 
     // 兜底：插件未运行（未安装 / DSH 在普通浏览器打开）→ 跟随 Windows 系统主题
