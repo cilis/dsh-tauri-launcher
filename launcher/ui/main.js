@@ -262,10 +262,11 @@
         return;
       }
       if (data.__tbNavStatus) {
+        const status = data.__tbNavStatus || {};
         const back = document.getElementById("tb-back");
         const fwd = document.getElementById("tb-forward");
-        if (back) back.disabled = !data.back;
-        if (fwd) fwd.disabled = !data.forward;
+        if (back) back.disabled = !status.back;
+        if (fwd) fwd.disabled = !status.forward;
         echoToFrame({
           __tbNavEcho: {
             stage: "status",
