@@ -67,15 +67,21 @@
         <button id="tb-back" title="后退 (Alt+←)" aria-label="后退"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M8 1L3 6l5 5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         <button id="tb-forward" title="前进 (Alt+→)" aria-label="前进"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M4 1l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
-      <span class="tb-title" data-tauri-drag-region>DeepSeek Harness</span>
       <div class="menu-anchor">
-        <button id="menu-btn" title="菜单" aria-haspopup="true">⋯</button>
+        <button id="menu-btn" title="文件" aria-haspopup="true">文件</button>
         <div id="menu-panel" class="hidden" role="menu">
           <button class="menu-item" id="menu-settings" role="menuitem">设置</button>
           <button class="menu-item" id="menu-reload" role="menuitem">重新加载页面</button>
           <button class="menu-item" id="menu-browser" role="menuitem">在浏览器中打开</button>
           <div class="menu-sep"></div>
           <button class="menu-item menu-danger" id="menu-quit" role="menuitem">退出</button>
+        </div>
+      </div>
+      <div class="menu-anchor">
+        <button id="help-btn" title="帮助" aria-haspopup="true">帮助</button>
+        <div id="help-panel" class="hidden" role="menu">
+          <button class="menu-item" id="help-website" role="menuitem">DSH官网</button>
+          <button class="menu-item" id="help-docs" role="menuitem">文档</button>
         </div>
       </div>
       <div class="tb-spacer" data-tauri-drag-region></div>

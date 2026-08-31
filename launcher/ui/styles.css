@@ -211,16 +211,6 @@ body {
   display: none;
 }
 
-.tb-title {
-  display: flex;
-  align-items: center;
-  padding: 0 12px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--tb-title-fg, #111827);
-  pointer-events: none;
-}
-
 /* 前进 / 后退（配色走 --tb-* 变量，与主题联动） */
 
 .tb-nav {
@@ -254,7 +244,7 @@ body {
   background: transparent;
 }
 
-/* 菜单 */
+/* 菜单（文件 / 帮助） */
 
 .menu-anchor {
   position: relative;
@@ -263,25 +253,28 @@ body {
   margin-left: 6px;
 }
 
-#menu-btn {
-  width: 32px;
+#menu-btn,
+#help-btn {
   height: 28px;
+  padding: 0 10px;
   border: none;
   border-radius: 6px;
   background: transparent;
   color: var(--tb-fg, #1f2937);
-  font-size: 16px;
+  font-size: 13px;
   line-height: 1;
   cursor: default;
-  letter-spacing: 1px;
 }
 
 #menu-btn:hover,
-#menu-btn.open {
+#menu-btn.open,
+#help-btn:hover,
+#help-btn.open {
   background: var(--tb-hover, rgba(17, 24, 39, 0.08));
 }
 
-#menu-panel {
+#menu-panel,
+#help-panel {
   position: absolute;
   top: 34px;
   left: 0;

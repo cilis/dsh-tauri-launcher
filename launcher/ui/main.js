@@ -88,42 +88,48 @@
     document.getElementById("tb-back")?.addEventListener("click", () => sendNav("back"));
     document.getElementById("tb-forward")?.addEventListener("click", () => sendNav("forward"));
 
-    // ---------- 标题栏菜单 ----------
+    // ---------- 标题栏菜单（文件 / 帮助） ----------
     const menuBtn = document.getElementById("menu-btn");
     const menuPanel = document.getElementById("menu-panel");
+    const helpBtn = document.getElementById("help-btn");
+    const helpPanel = document.getElementById("help-panel");
 
-    function closeMenu() {
+    function closeMenus() {
       menuPanel?.classList.add("hidden");
       menuBtn?.classList.remove("open");
+      helpPanel?.classList.add("hidden");
+      helpBtn?.classList.remove("open");
     }
 
-    menuBtn?.addEventListener("click", () => {
-      const isOpen = !menuPanel?.classList.contains("hidden");
-      if (isOpen) {
-        closeMenu();
-      } else {
-        menuPanel?.classList.remove("hidden");
-        menuBtn?.classList.add("open");
+    function togglePanel(btn, panel) {
+      const isOpen = !panel?.classList.contains("hidden");
+      closeMenus();
+      if (!isOpen) {
+        panel?.classList.remove("hidden");
+        btn?.classList.add("open");
       }
-    });
+    }
+
+    menuBtn?.addEventListener("click", () => togglePanel(menuBtn, menuPanel));
+    helpBtn?.addEventListener("click", () => togglePanel(helpBtn, helpPanel));
 
     // 点击标题栏其他区域收起；切到 iframe（父窗口失焦）时也收起
     document.addEventListener("mousedown", (e) => {
-      if (
-        menuPanel &&
-        !menuPanel.classList.contains("hidden") &&
-        !menuPanel.contains(e.target) &&
-        e.target !== menuBtn
-      ) {
-        closeMenu();
-      }
+      const inMenu =
+        (menuPanel && menuPanel.contains(e.target)) ||
+        e.target === menuBtn ||
+        (helpPanel && helpPanel.contains(e.target)) ||
+        e.target === helpBtn;
+      if (!inMenu) closeMenus();
+      else if (e.target === menuBtn && helpPanel && !helpPanel.classList.contains("hidden")) closeMenus();
+      else if (e.target === helpBtn && menuPanel && !menuPanel.classList.contains("hidden")) closeMenus();
     });
-    window.addEventListener("blur", closeMenu);
+    window.addEventListener("blur", closeMenus);
 
     document
       .getElementById("menu-settings")
       ?.addEventListener("click", () => {
-        closeMenu();
+        closeMenus();
         void invoke("open_settings_window").catch((e) =>
           console.error("打开设置失败", e),
         );
@@ -132,7 +138,7 @@
     document
       .getElementById("menu-reload")
       ?.addEventListener("click", () => {
-        closeMenu();
+        closeMenus();
         // iframe 跨源无法直接 contentWindow.location.reload()，重设 src 重载
         const frame = document.getElementById("dsh-frame");
         if (frame && frameUrl) frame.src = frameUrl;
@@ -141,7 +147,7 @@
     document
       .getElementById("menu-browser")
       ?.addEventListener("click", () => {
-        closeMenu();
+        closeMenus();
         if (frameUrl) {
           void invoke("open_in_browser", { url: frameUrl }).catch((e) =>
             console.error("浏览器打开失败", e),
@@ -152,6 +158,20 @@
     document.getElementById("menu-quit")?.addEventListener("click", () => {
       void invoke("quit_app").catch((e) => console.error("退出失败", e));
     });
+
+    // ---------- 帮助菜单：默认浏览器打开官网 / 文档 ----------
+    const HELP_URLS = {
+      website: "https://www.deepseek.com/harness/",
+      docs: "https://deepseek-harness.github.io/deepseek-harness/guide/quickstart",
+    };
+    for (const [id, url] of Object.entries(HELP_URLS)) {
+      document.getElementById(`help-${id}`)?.addEventListener("click", () => {
+        closeMenus();
+        void invoke("open_in_browser", { url }).catch((e) =>
+          console.error("浏览器打开失败", e),
+        );
+      });
+    }
 
     // 最大化图标随窗口状态切换
     async function refreshMaxGlyph() {
@@ -227,7 +247,6 @@
     const s = document.documentElement.style;
     s.setProperty("--tb-bg", pickColor(ov.bg, p.bg));
     s.setProperty("--tb-fg", pickColor(ov.fg, p.fg));
-    s.setProperty("--tb-title-fg", pickColor(ov.fg, p.titleFg));
     s.setProperty("--tb-hover", p.hover);
     s.setProperty("--tb-menu-bg", pickColor(ov.menuBg, p.menuBg));
     s.setProperty("--tb-menu-border", pickColor(ov.menuBorder, p.menuBorder));
