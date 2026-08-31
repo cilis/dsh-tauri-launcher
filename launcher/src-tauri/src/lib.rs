@@ -61,12 +61,13 @@ fn is_light_theme() -> bool {
         match out {
             Ok(o) if o.status.success() => {
                 let s = String::from_utf8_lossy(&o.stdout);
-                // 输出形如 `AppsUseLightTheme    REG_DWORD    0x0`；只看末位 0x0 还是 0x1。
-                if s.contains("0x0") {
-                    false
-                } else {
-                    // 含 0x1 或无法解析 → 默认浅色（兼容缺键场景）
-                    true
+                // 输出形如 `    AppsUseLightTheme    REG_DWORD    0x0`；
+                // 取最后一个 token 与 "0x1" 精确比较，避免子串误匹配。
+                match s.split_whitespace().next_back() {
+                    Some("0x1") => true,
+                    Some("0x0") => false,
+                    // 值缺失或无法解析 → 默认浅色（兼容缺键场景）
+                    _ => true,
                 }
             }
             _ => true,
@@ -192,6 +193,9 @@ fn set_autostart(enabled: bool) -> bool {
         return false;
     };
     let exe_path = exe.to_string_lossy().into_owned();
+    // Run 键值必须用引号包裹：路径含空格（Program Files / 含空格用户目录）时，
+    // 不带引号会被 Explorer 截断在第一个空格处，导致开机自启失效。
+    let quoted_exe = format!("\"{exe_path}\"");
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -205,7 +209,7 @@ fn set_autostart(enabled: bool) -> bool {
                     "/t",
                     "REG_SZ",
                     "/d",
-                    &exe_path,
+                    &quoted_exe,
                     "/f",
                 ])
                 .creation_flags(0x0800_0000)
@@ -397,7 +401,9 @@ fn kill_dsh_port_owner() {
     {
         use std::os::windows::process::CommandExt;
         let script = format!(
-            "$p = Get-NetTCPConnection -LocalPort {} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess; if ($p) {{ Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }}",
+            "$p = Get-NetTCPConnection -LocalPort {} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess; \
+             if ($p) {{ $proc = Get-Process -Id $p -ErrorAction SilentlyContinue; \
+               if ($proc -and $proc.ProcessName -like 'node*') {{ Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }} }}",
             dsh::DSH_PORT
         );
         let _ = StdCommand::new("powershell")

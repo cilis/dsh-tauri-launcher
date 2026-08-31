@@ -31,6 +31,14 @@ jobs:
         run: cargo test
         working-directory: launcher/src-tauri
 
+      - name: JS 语法检查（宿主/浏览器半 + 桌面 UI）
+        run: |
+          node --check lib/index.js
+          node --check lib/client.js
+          node --check launcher/ui/main.js
+          node --check launcher/ui/settings.js
+          node --check launcher/ui/exiting.js
+
       - name: 构建 release exe
         run: cargo build --release
         working-directory: launcher/src-tauri
