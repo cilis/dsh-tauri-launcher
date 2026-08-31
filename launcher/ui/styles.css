@@ -221,6 +221,31 @@ body {
   pointer-events: none;
 }
 
+/* 前进 / 后退（配色走 --tb-* 变量，与主题联动） */
+
+.tb-nav {
+  display: flex;
+  align-items: center;
+  padding-left: 6px;
+}
+
+.tb-nav button {
+  width: 32px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--tb-fg, #1f2937);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+}
+
+.tb-nav button:hover {
+  background: var(--tb-hover, rgba(17, 24, 39, 0.08));
+}
+
 /* 菜单 */
 
 .menu-anchor {

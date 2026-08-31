@@ -73,6 +73,21 @@
       void appWindow.close();
     });
 
+    // ---------- 前进 / 后退（插件协作通道） ----------
+    // DSH 在跨源 iframe 里，外壳无法直接操作它的 history；
+    // postMessage 是唯一合法的跨源操作，由插件在 DSH 页面内同源执行。
+    function sendNav(dir) {
+      const frame = document.getElementById("dsh-frame");
+      if (!frame || !frameUrl || !frame.contentWindow) return;
+      try {
+        frame.contentWindow.postMessage({ __tbNav: dir }, new URL(frameUrl).origin);
+      } catch {
+        /* iframe 未就绪或 origin 解析失败时忽略 */
+      }
+    }
+    document.getElementById("tb-back")?.addEventListener("click", () => sendNav("back"));
+    document.getElementById("tb-forward")?.addEventListener("click", () => sendNav("forward"));
+
     // ---------- 标题栏菜单 ----------
     const menuBtn = document.getElementById("menu-btn");
     const menuPanel = document.getElementById("menu-panel");
