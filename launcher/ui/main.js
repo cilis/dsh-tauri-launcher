@@ -239,16 +239,24 @@
   }
 
   function setupThemeFollow() {
-    // 主通道：Web 插件（运行在 DSH iframe 里）中继官方主题服务的解析结果
+    // 主通道：Web 插件（运行在 DSH iframe 里）双向 postMessage：
+    // 主题中继 + 会话导航状态（后退/前进键的可用性）。
     window.addEventListener("message", (event) => {
       const data = event.data;
-      if (!data || data.__dshLauncherTheme !== 1) return;
-      if (!frameUrl) return;
+      if (!data || !frameUrl) return;
       try {
         if (event.origin !== new URL(frameUrl).origin) return;
       } catch {
         return;
       }
+      if (data.__tbNavStatus) {
+        const back = document.getElementById("tb-back");
+        const fwd = document.getElementById("tb-forward");
+        if (back) back.disabled = !data.back;
+        if (fwd) fwd.disabled = !data.forward;
+        return;
+      }
+      if (data.__dshLauncherTheme !== 1) return;
       pluginThemeApplied = true;
       applyTitlebarTheme(data.scheme, {
         bg: data.bg,

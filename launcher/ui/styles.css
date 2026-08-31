@@ -246,6 +246,14 @@ body {
   background: var(--tb-hover, rgba(17, 24, 39, 0.08));
 }
 
+.tb-nav button:disabled {
+  opacity: 0.35;
+}
+
+.tb-nav button:disabled:hover {
+  background: transparent;
+}
+
 /* 菜单 */
 
 .menu-anchor {
