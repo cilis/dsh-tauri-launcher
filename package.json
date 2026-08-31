@@ -1,6 +1,6 @@
 {
   "name": "@lenorin/dsh-tauri-launcher",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "DSH Web 插件：基于 Tauri 2 的 DeepSeek Harness 桌面启动器，自动联动桌面快捷方式，exe 路径与探测窗口可配置。",
   "type": "module",
   "main": "lib/index.js",
