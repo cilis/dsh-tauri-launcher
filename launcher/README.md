@@ -8,10 +8,11 @@
 - **安装/启动失败反馈报错信息**，可一键重试
 - **系统托盘**提供“打开 DeepSeek Harness”“设置”与“退出”按钮；退出时终止由本应用启动的 DeepSeek Harness 进程（若启动时发现已有实例在运行则接管显示，退出时不终止外部实例）
 - 关闭窗口最小化到托盘，应用常驻后台
-- **设置窗口**（托盘 → 设置）提供三项开关：
+- **设置窗口**（托盘 → 设置）提供四项开关：
   - **开机启动**：写入/删除 `HKCU\...\Run` 的 `DeepSeekHarness` 注册表值（指向本应用 exe）
   - **创建全局快捷方式**：勾选注册全局快捷键 `Ctrl+Shift+H`（按下即唤起 DeepSeek Harness 主窗口），取消勾选注销快捷键；勾选状态持久化在 exe 同目录的 `.dsh-config.json`，应用启动时自动恢复注册
   - **桌面快捷方式**：勾选在桌面创建 `DeepSeek Harness.lnk`（指向本应用 exe，带图标），取消勾选删除；状态以 .lnk 是否存在为准，无需持久化
+  - **退出时结束 DeepSeek Harness 进程**：勾选后退出桌面应用时一并结束 DeepSeek Harness 进程；默认不结束，Harness 继续在后台运行
 
 ## 开发
 
@@ -35,7 +36,7 @@ pnpm tauri build
 
 ## 与 Web 设置插件的标记文件协作
 
-DeepSeek Harness Web 设置中的“桌面启动”插件（deepseek-harness-tauri）只负责启动/退出本应用；本应用 exe 同目录下的标记文件用于协作（每秒检查一次）：
+DeepSeek Harness Web 设置中的“桌面启动”插件（`@lenorin/dsh-tauri-launcher`）只负责启动/退出本应用；本应用 exe 同目录下的标记文件用于协作（每秒检查一次）：
 
 - `.dsh-heartbeat`：每秒写入当前 Unix 时间戳，供插件在沙箱内判断本应用是否仍在运行（插件侧的新鲜窗口为 4 秒，须与 1 秒写入周期匹配）；
 - `.dsh-quit`：内容为 `1` 且修改时间在 60 秒内 → 本应用**仅退出自身**（消费时自删标记文件），保留由其启动的 DeepSeek Harness 进程继续运行（与托盘“退出”的整树清理语义不同）；插件重写内容为 `0` 即取消退出请求。

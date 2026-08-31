@@ -1,0 +1,14 @@
+/* 退出进度窗口：紧凑 dialog 样式，只承载中间的 phase 区域。
+   （自 exiting.html 内联 <style> 抽出，以兼容严格 CSP 的 style-src 'self'。） */
+#app {
+  padding: 0;
+}
+.exiting .card {
+  padding: 22px 28px 18px;
+  border-radius: 0;
+}
+.exiting .phase {
+  margin-top: 0;
+  min-height: 0;
+  gap: 10px;
+}
