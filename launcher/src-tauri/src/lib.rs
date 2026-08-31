@@ -625,12 +625,17 @@ fn open_settings_window(app: AppHandle) {
 
 /// 主窗口自绘标题栏菜单：用系统默认浏览器打开 DSH Web。
 /// 经 explorer.exe 打开（不走 cmd shell），URL 无解释执行风险；
-/// 只接受本地 DSH 地址前缀，防御性校验。
+/// 只接受白名单前缀（本地 DSH 地址 + 官网/文档），防御性校验。
 #[tauri::command]
 fn open_in_browser(url: String) -> Result<(), String> {
-    if !url.starts_with(dsh::DSH_URL) {
+    const ALLOWED_PREFIXES: [&str; 3] = [
+        dsh::DSH_URL,
+        "https://www.deepseek.com/harness",
+        "https://deepseek-harness.github.io/deepseek-harness",
+    ];
+    if !ALLOWED_PREFIXES.iter().any(|prefix| url.starts_with(prefix)) {
         return Err(format!(
-            "仅允许打开本地 DeepSeek Harness 地址（{}/…）。",
+            "仅允许打开白名单地址（{}、官网与文档）。",
             dsh::DSH_URL
         ));
     }
