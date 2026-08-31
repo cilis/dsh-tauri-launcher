@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the launcher windows (main + settings)",
-  "windows": ["main", "settings"],
+  "description": "Capability for the launcher windows (main + settings + exiting)",
+  "windows": ["main", "settings", "exiting"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
@@ -11,6 +11,7 @@
     "core:window:allow-unmaximize",
     "core:window:allow-toggle-maximize",
     "core:window:allow-is-maximized",
+    "core:window:allow-set-size",
     "core:window:allow-close"
   ]
 }
