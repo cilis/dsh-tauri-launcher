@@ -431,13 +431,12 @@ fn close_visible_windows(app: &AppHandle) {
     }
 }
 
-/// 显示“正在退出 DeepSeek Harness 进程”进度窗口（仅结束 Harness 时使用）。
-/// 主窗口会被导航到 DSH Web，故退出反馈用独立小窗口承载；重复调用直接跳过。
-fn show_exit_progress(app: &AppHandle) {
-    if app.get_webview_window("exiting").is_some() {
-        return;
-    }
-    let result = WebviewWindowBuilder::new(app, "exiting", WebviewUrl::App("exiting.html".into()))
+/// 创建退出进度窗口（预建后隐藏）。
+/// 与设置窗口同一约束：主窗口 iframe 加载跨源 DSH 之后，主线程同步 build
+/// 第二个 webview 窗口会死锁（见 create_settings_window 注释）。退出进度
+/// 窗口同样必须在启动早期预建，退出时只复用 show()。
+fn create_exit_progress_window(app: &AppHandle) -> tauri::Result<()> {
+    let built = WebviewWindowBuilder::new(app, "exiting", WebviewUrl::App("exiting.html".into()))
         .title("退出中")
         .inner_size(320.0, 125.0)
         .resizable(false)
@@ -447,13 +446,24 @@ fn show_exit_progress(app: &AppHandle) {
         .skip_taskbar(true)
         .always_on_top(true)
         .focused(false)
+        // 预建不可见：避免启动时窗口闪现一帧；退出时 show() 才亮相
+        .visible(false)
         .center()
-        .build();
-    match result {
-        Ok(w) => {
-            let _ = w.set_icon(icon_for_theme(is_light_theme()));
-        }
-        Err(e) => eprintln!("[launcher] 创建退出进度窗口失败：{e}"),
+        .build()?;
+    let _ = built.set_icon(icon_for_theme(is_light_theme()));
+    let _ = built.hide();
+    Ok(())
+}
+
+/// 显示“正在退出 DeepSeek Harness 进程”进度窗口（仅结束 Harness 时使用）。
+/// 只复用启动期预建的实例；**不做现建兜底**——退出路径绝不能依赖一次
+/// 可能死锁的同步 build（iframe 已加载 DSH 后主线程 build 会永久卡死），
+/// 预建失败时宁可没有进度动画，退出流程照常完成。
+fn show_exit_progress(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("exiting") {
+        let _ = w.show();
+    } else {
+        eprintln!("[launcher] 退出进度窗口未预建，跳过动画直接退出");
     }
 }
 
@@ -878,6 +888,12 @@ pub fn run() {
             let pre = app.handle().clone();
             if let Err(e) = create_settings_window(&pre) {
                 eprintln!("[launcher] 预建设置窗口失败：{e}");
+            }
+
+            // 预建退出进度窗口（创建后隐藏）：与设置窗口同一死锁约束，
+            // 退出时只复用 show()，绝不在退出路径同步 build。
+            if let Err(e) = create_exit_progress_window(&pre) {
+                eprintln!("[launcher] 预建退出进度窗口失败：{e}");
             }
 
             // 标记文件轮询：心跳 + 响应“仅退出桌面应用”请求（每秒一次，
