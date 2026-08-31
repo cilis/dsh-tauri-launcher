@@ -241,6 +241,18 @@
   function setupThemeFollow() {
     // 主通道：Web 插件（运行在 DSH iframe 里）双向 postMessage：
     // 主题中继 + 会话导航状态（后退/前进键的可用性）。
+    // 外壳收到任何消息后回显进 iframe（诊断 + 插件侧可观测），并周期 ping
+    // 让插件回报最新状态（单发丢失也能自愈）。
+    const echoToFrame = (payload) => {
+      const frame = document.getElementById("dsh-frame");
+      if (!frame || !frameUrl || !frame.contentWindow) return;
+      try {
+        frame.contentWindow.postMessage(payload, new URL(frameUrl).origin);
+      } catch {
+        /* 忽略 */
+      }
+    };
+
     window.addEventListener("message", (event) => {
       const data = event.data;
       if (!data || !frameUrl) return;
@@ -254,6 +266,13 @@
         const fwd = document.getElementById("tb-forward");
         if (back) back.disabled = !data.back;
         if (fwd) fwd.disabled = !data.forward;
+        echoToFrame({
+          __tbNavEcho: {
+            stage: "status",
+            back: Boolean(back && !back.disabled),
+            forward: Boolean(fwd && !fwd.disabled),
+          },
+        });
         return;
       }
       if (data.__dshLauncherTheme !== 1) return;
@@ -266,7 +285,13 @@
         sep: data.sep,
         danger: data.danger,
       });
+      echoToFrame({ __tbNavEcho: { stage: "theme", scheme: data.scheme } });
     });
+
+    // 心跳探针：每 3 秒 ping 一次，插件回以最新导航状态
+    setInterval(() => {
+      echoToFrame({ __tbNav: "ping" });
+    }, 3000);
 
     // 兜底：插件未运行（未安装 / DSH 在普通浏览器打开）→ 跟随 Windows 系统主题
     if (window.matchMedia) {
