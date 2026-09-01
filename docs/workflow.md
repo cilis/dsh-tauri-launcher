@@ -44,9 +44,7 @@
       沙箱内不可靠，勿仅凭探测下结论）；
 - [ ] 涉及 Web 插件（`lib/`）的改动：重新打包/安装进 profile
       （`~/.dsh/profiles/web/node_modules/@lenorin/dsh-tauri-launcher`）后
-      在 Web 设置面板验证；
-- [ ] 双仓库同步项：`dsh-launcher`（独立项目）与本仓库 `launcher/` 共享的
-      核心逻辑（如 `--no-open` 参数）两边都要改、都验证。
+      在 Web 设置面板验证。
 
 ## 版本同步与发版策略
 
