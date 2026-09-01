@@ -1003,6 +1003,15 @@ pub fn run() {
                     if now != last_light {
                         last_light = now;
                         apply_theme_icons(&theme_handle, now);
+                        // WebView2 页面的 prefers-color-scheme 只有宿主显式设置
+                        // PreferredColorScheme 才会随 Windows 变化，而 tauri/wry
+                        // 未暴露该能力（wry#806）：DSH 的「跟随系统」偏好会被冻结
+                        // 在启动值。把系统主题广播给外壳，由外壳转发 iframe 内的
+                        // 插件，经 DSH 主题服务恢复跟随（浏览器端 Chromium 原生跟随）。
+                        let scheme = if now { "light" } else { "dark" };
+                        if let Some(w) = theme_handle.get_webview_window("main") {
+                            let _ = w.emit("launcher-system-theme", scheme);
+                        }
                     }
                 }
             });

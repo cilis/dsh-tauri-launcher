@@ -304,6 +304,19 @@
       postToFrame({ __tbNav: "ping" });
     }, 3000);
 
+    // 桌面端系统主题跟随：WebView2 的 prefers-color-scheme 不随 Windows 变化
+    // （tauri/wry 未暴露 PreferredColorScheme），启动器轮询到系统主题变化后
+    // 经事件广播到这里，再转发给 iframe 内的插件，由 DSH 主题服务恢复跟随。
+    if (window.__TAURI__.event?.listen) {
+      void window.__TAURI__.event
+        .listen("launcher-system-theme", (e) => {
+          if (e.payload === "light" || e.payload === "dark") {
+            postToFrame({ __tbSystemTheme: e.payload });
+          }
+        })
+        .catch(() => {});
+    }
+
     // 兜底：插件未运行（未安装 / DSH 在普通浏览器打开）→ 跟随 Windows 系统主题
     if (window.matchMedia) {
       const mq = window.matchMedia("(prefers-color-scheme: dark)");
