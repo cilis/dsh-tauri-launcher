@@ -18,3 +18,8 @@ tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "time", "net", "sync"] }
+
+# 与 tauri/tao 同版本（类型互通：HWND 直接传递），仅用于任务栏大图标（ICON_BIG）设置
+[target."cfg(windows)".dependencies.windows]
+version = "0.61"
+features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"]

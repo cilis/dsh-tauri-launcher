@@ -90,10 +90,58 @@ fn apply_theme_icons(app: &AppHandle, light: bool) {
     }
     for label in ["main", "settings", "exiting"] {
         if let Some(w) = app.get_webview_window(label) {
-            if let Err(e) = w.set_icon(img.clone()) {
-                eprintln!("[launcher] 切换 {label} 窗口图标失败：{e}");
+            apply_window_icon(&w, &img);
+        }
+    }
+}
+
+/// 把主题图标应用到单个窗口：小图标（标题栏/Alt-Tab）+ 任务栏大图标。
+/// tauri 的 `set_icon` 底层（tao）只发 WM_SETICON+ICON_SMALL，而任务栏按钮
+/// 读取的是 ICON_BIG，须另行补发（等价 tao 未对外暴露的 set_taskbar_icon）。
+fn apply_window_icon(window: &tauri::WebviewWindow, img: &tauri::image::Image) {
+    let _ = window.set_icon(img.clone());
+    #[cfg(windows)]
+    set_taskbar_icon_big(window, img);
+}
+
+/// 经 WM_SETICON+ICON_BIG 设置任务栏按钮图标（512×512 源由系统缩放）。
+/// RGBA→BGRA+AND 掩码的构造与 tao `WinIcon::from_rgba` 同构。
+/// 创建的 HICON 不主动销毁：WM_SETICON 替换后旧句柄虽不再被窗口引用，
+/// 但 Explorer 渲染缓存可能仍持有；主题切换低频、单份位图约 1MB，进程
+/// 生命周期内可控，主动销毁反而有闪烁风险。
+#[cfg(windows)]
+fn set_taskbar_icon_big(window: &tauri::WebviewWindow, img: &tauri::image::Image) {
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{CreateIcon, SendMessageW, ICON_BIG, WM_SETICON};
+
+    let rgba = img.rgba();
+    let (width, height) = (img.width(), img.height());
+    let pixel_count = width as usize * height as usize;
+    if rgba.len() != pixel_count * 4 {
+        eprintln!("[launcher] 任务栏大图标像素数据长度异常，跳过");
+        return;
+    }
+    let mut bgra = rgba.to_vec();
+    let mut and_mask = Vec::with_capacity(pixel_count);
+    for px in bgra.chunks_exact_mut(4) {
+        // alpha 取反（mod 256）作 AND 掩码，与 tao 实现保持一致
+        and_mask.push(px[3].wrapping_sub(u8::MAX));
+        px.swap(0, 2); // RGBA → BGRA
+    }
+    match unsafe { CreateIcon(None, width as i32, height as i32, 1, 32, and_mask.as_ptr(), bgra.as_ptr()) } {
+        Ok(hicon) => {
+            if let Ok(hwnd) = window.hwnd() {
+                unsafe {
+                    SendMessageW(
+                        hwnd,
+                        WM_SETICON,
+                        Some(WPARAM(ICON_BIG as usize)),
+                        Some(LPARAM(hicon.0 as isize)),
+                    );
+                }
             }
         }
+        Err(e) => eprintln!("[launcher] 创建任务栏大图标失败：{e}"),
     }
 }
 
@@ -356,7 +404,7 @@ fn create_settings_window(app: &AppHandle) -> tauri::Result<()> {
         .visible(false)
         .center()
         .build()?;
-    let _ = built.set_icon(icon_for_theme(is_light_theme()));
+    apply_window_icon(&built, &icon_for_theme(is_light_theme()));
     let _ = built.hide();
     Ok(())
 }
@@ -456,7 +504,7 @@ fn create_exit_progress_window(app: &AppHandle) -> tauri::Result<()> {
         .visible(false)
         .center()
         .build()?;
-    let _ = built.set_icon(icon_for_theme(is_light_theme()));
+    apply_window_icon(&built, &icon_for_theme(is_light_theme()));
     let _ = built.hide();
     Ok(())
 }
@@ -834,7 +882,7 @@ pub fn run() {
             let light = is_light_theme();
             let icon = icon_for_theme(light);
             if let Some(w) = app.get_webview_window("main") {
-                let _ = w.set_icon(icon.clone());
+                apply_window_icon(&w, &icon);
             }
             let show = MenuItem::with_id(app, "show", "打开 DeepSeek Harness", true, None::<&str>)?;
             let settings = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
