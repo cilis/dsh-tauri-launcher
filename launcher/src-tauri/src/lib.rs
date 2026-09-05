@@ -104,15 +104,20 @@ fn apply_window_icon(window: &tauri::WebviewWindow, img: &tauri::image::Image) {
     set_taskbar_icon_big(window, img);
 }
 
-/// 经 WM_SETICON+ICON_BIG 设置任务栏按钮图标（512×512 源由系统缩放）。
+/// 设置任务栏按钮图标：WM_SETICON+ICON_BIG 之外同时更新窗口类图标槽
+/// （GCLP_HICON/GCLP_HICONSM）双路径。Win11 25H2 实测：启动时设置有效，
+/// 但运行时切换仅发 WM_SETICON 不触发新任务栏刷新——类图标槽是任务栏
+/// 读图标的另一路径，一并更新（Chromium 换图标的同款做法）。
 /// RGBA→BGRA+AND 掩码的构造与 tao `WinIcon::from_rgba` 同构。
-/// 创建的 HICON 不主动销毁：WM_SETICON 替换后旧句柄虽不再被窗口引用，
+/// 创建的 HICON 不主动销毁：替换后旧句柄虽不再被窗口引用，
 /// 但 Explorer 渲染缓存可能仍持有；主题切换低频、单份位图约 1MB，进程
 /// 生命周期内可控，主动销毁反而有闪烁风险。
 #[cfg(windows)]
 fn set_taskbar_icon_big(window: &tauri::WebviewWindow, img: &tauri::image::Image) {
     use windows::Win32::Foundation::{LPARAM, WPARAM};
-    use windows::Win32::UI::WindowsAndMessaging::{CreateIcon, SendMessageW, ICON_BIG, WM_SETICON};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateIcon, SendMessageW, SetClassLongPtrW, GCLP_HICON, GCLP_HICONSM, ICON_BIG, WM_SETICON,
+    };
 
     let rgba = img.rgba();
     let (width, height) = (img.width(), img.height());
@@ -138,6 +143,11 @@ fn set_taskbar_icon_big(window: &tauri::WebviewWindow, img: &tauri::image::Image
                         Some(WPARAM(ICON_BIG as usize)),
                         Some(LPARAM(hicon.0 as isize)),
                     );
+                    // Win11 25H2 实测：运行时仅 WM_SETICON ICON_BIG 不触发任务栏刷新
+                    // （启动时设置有效、切换时不更新）。窗口类图标槽（GCLP_HICON/
+                    // GCLP_HICONSM）是任务栏读图标的另一路径，一并更新（Chromium 同款做法）。
+                    SetClassLongPtrW(hwnd, GCLP_HICON, hicon.0 as isize);
+                    SetClassLongPtrW(hwnd, GCLP_HICONSM, hicon.0 as isize);
                 }
             }
         }
