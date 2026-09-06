@@ -5,6 +5,10 @@ node_modules/
 launcher/src-tauri/target/
 launcher/src-tauri/gen/
 
+# 运行时标记文件（桌面应用在 exe 同目录生成；本地冒烟 launcher/bin/dsh-launcher.exe 时勿误提交）
+.dsh-heartbeat
+.dsh-quit
+
 # Logs
 *.log
 
