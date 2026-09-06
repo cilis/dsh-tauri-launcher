@@ -56,10 +56,10 @@ jobs:
           $exe = 'launcher/src-tauri/target/release/dsh-launcher.exe'
 
           function Invoke-Gitee {
-            param($Method, $Uri, $JsonBody, $Form, $Attempts = 3)
+            param($Method, $Uri, $JsonBody, $Form, $Attempts = 3, $TimeoutSec = 90)
             for ($i = 1; $i -le $Attempts; $i++) {
               try {
-                $p = @{ Method = $Method; Uri = $Uri; Headers = $headers; TimeoutSec = 90; ErrorAction = 'Stop' }
+                $p = @{ Method = $Method; Uri = $Uri; Headers = $headers; TimeoutSec = $TimeoutSec; ErrorAction = 'Stop' }
                 if ($JsonBody) { $p.Body = $JsonBody; $p.ContentType = 'application/json; charset=utf-8' }
                 if ($Form) { $p.Form = $Form }
                 return Invoke-RestMethod @p
@@ -121,12 +121,14 @@ jobs:
           } else {
             $uploaded = $false
             $lastErr = ''
-            foreach ($attempt in 1..2) {
+            foreach ($attempt in 1..3) {
               try {
                 # access_token 同时放查询参数与表单字段（Gitee 文档为查询参数）。
+                # 上传 10MB exe 从海外 runner 到 Gitee 偶发慢于 90s（v1.0.7 实测
+                # 两轮全超时），单独放宽到 600s 并叠加外层 3 次重试。
                 $form = @{ access_token = $env:GITEE_TOKEN; file = Get-Item $exe }
                 $uri = "$base/releases/$($rel.id)/attach_files?access_token=$($env:GITEE_TOKEN)"
-                Invoke-Gitee -Method Post -Uri $uri -Form $form -Attempts 2 | Out-Null
+                Invoke-Gitee -Method Post -Uri $uri -Form $form -Attempts 2 -TimeoutSec 600 | Out-Null
                 $uploaded = $true
                 break
               } catch {
