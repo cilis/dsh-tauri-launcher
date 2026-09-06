@@ -1,5 +1,13 @@
-// DeepSeek Harness 启动器前端：检测安装 → 自动安装（动画+日志）→ 成功提示 → 启动并跳转到本地 Web 界面。
+// DeepSeek Harness 启动器外壳（主窗口）：
+// 1. 启动流程：检测安装 → 自动安装（动画+日志）→ 成功提示 → 启动并跳转到本地 Web 界面；
+// 2. 标题栏：三键、前进/后退、文件/帮助菜单（DSH 就绪后显示，iframe 承载 DSH）；
+// 3. 主题跟随：DSH 主题中继（--tb-* 变量）与 Windows 系统主题兜底。
 // 通过 withGlobalTauri 注入的 window.__TAURI__ 调用后端命令。
+//
+// 模块级结构（2026-09 阶段一拆分，见优化报告 v2）：
+// - setupWindowButtons / setupNavButtons / setupMenus / setupMaxGlyph（原 setupTitlebar 拆分）
+// - postToFrame：向 iframe 发送 postMessage 的唯一出口（origin 缓存于 showFrame）
+// - setupThemeFollow：主题中继 + 导航状态 + 系统主题转发 + matchMedia 兜底
 /* global window, document */
 (function () {
   "use strict";
@@ -45,10 +53,17 @@
   /* ---------- 标题栏与 iframe 外壳 ---------- */
 
   let frameUrl = "";
+  /** iframe 页面的 origin（showFrame 时解析并缓存，供 postToFrame 定向投递）。 */
+  let frameOrigin = "";
 
   /** DSH 就绪：隐藏启动卡片，显示标题栏并用 iframe 承载（不再整页跳转）。 */
   function showFrame(url) {
     frameUrl = url;
+    try {
+      frameOrigin = new URL(url).origin;
+    } catch {
+      frameOrigin = "";
+    }
     document.getElementById("app")?.classList.add("hidden");
     document.getElementById("titlebar")?.classList.remove("hidden");
     const frame = document.getElementById("dsh-frame");
@@ -58,11 +73,23 @@
     }
   }
 
-  /** 标题栏三键：最小化 / 最大化还原 / 关闭（关闭被 Rust 拦截为隐藏到托盘）。 */
-  function setupTitlebar() {
-    if (!window.__TAURI__) return;
-    const appWindow = window.__TAURI__.window.getCurrentWindow();
+  /**
+   * 向 iframe 发送 postMessage（外壳 → 插件 的唯一出口）。
+   * 载荷协议字段（__tbNav / __tbNavStatus / __tbSystemTheme 等）与
+   * lib/client.js 一一对应，新增字段须两侧同步（协议单源化见优化报告 v2 B5）。
+   */
+  function postToFrame(payload) {
+    const frame = document.getElementById("dsh-frame");
+    if (!frame || !frameUrl || !frameOrigin || !frame.contentWindow) return;
+    try {
+      frame.contentWindow.postMessage(payload, frameOrigin);
+    } catch {
+      /* iframe 未就绪或 origin 解析失败时忽略 */
+    }
+  }
 
+  /** 标题栏三键：最小化 / 最大化还原 / 关闭（关闭被 Rust 拦截为隐藏到托盘）。 */
+  function setupWindowButtons(appWindow) {
     document.getElementById("btn-min")?.addEventListener("click", () => {
       void appWindow.minimize();
     });
@@ -72,23 +99,20 @@
     document.getElementById("btn-close")?.addEventListener("click", () => {
       void appWindow.close();
     });
+  }
 
-    // ---------- 前进 / 后退（插件协作通道） ----------
-    // DSH 在跨源 iframe 里，外壳无法直接操作它的 history；
-    // postMessage 是唯一合法的跨源操作，由插件在 DSH 页面内同源执行。
-    function sendNav(dir) {
-      const frame = document.getElementById("dsh-frame");
-      if (!frame || !frameUrl || !frame.contentWindow) return;
-      try {
-        frame.contentWindow.postMessage({ __tbNav: dir }, new URL(frameUrl).origin);
-      } catch {
-        /* iframe 未就绪或 origin 解析失败时忽略 */
-      }
-    }
-    document.getElementById("tb-back")?.addEventListener("click", () => sendNav("back"));
-    document.getElementById("tb-forward")?.addEventListener("click", () => sendNav("forward"));
+  /**
+   * 前进 / 后退（插件协作通道）：
+   * DSH 在跨源 iframe 里，外壳无法直接操作它的历史；postMessage 是唯一合法
+   * 的跨源操作，由插件在 DSH 页面内同源执行（应用层会话导航栈，见 client.js）。
+   */
+  function setupNavButtons() {
+    document.getElementById("tb-back")?.addEventListener("click", () => postToFrame({ __tbNav: "back" }));
+    document.getElementById("tb-forward")?.addEventListener("click", () => postToFrame({ __tbNav: "forward" }));
+  }
 
-    // ---------- 标题栏菜单（文件 / 帮助） ----------
+  /** 标题栏菜单（文件 / 帮助）。 */
+  function setupMenus() {
     const menuBtn = document.getElementById("menu-btn");
     const menuPanel = document.getElementById("menu-panel");
     const helpBtn = document.getElementById("help-btn");
@@ -159,7 +183,9 @@
       void invoke("quit_app").catch((e) => console.error("退出失败", e));
     });
 
-    // ---------- 帮助菜单：默认浏览器打开官网 / 文档 ----------
+    // 帮助菜单：默认浏览器打开官网 / 文档。
+    // ⚠️ URL 与 Rust 侧 open_in_browser 白名单分居两侧，新增外链须同步修改
+    // （lib.rs windows::open_in_browser 的 ALLOWED_PREFIXES）。
     const HELP_URLS = {
       website: "https://www.deepseek.com/harness/",
       docs: "https://deepseek-harness.github.io/deepseek-harness/guide/quickstart",
@@ -172,8 +198,10 @@
         );
       });
     }
+  }
 
-    // 最大化图标随窗口状态切换
+  /** 最大化图标随窗口状态切换。 */
+  function setupMaxGlyph(appWindow) {
     async function refreshMaxGlyph() {
       try {
         const maximized = await appWindow.isMaximized();
@@ -193,6 +221,15 @@
         .catch(() => {});
     }
     void refreshMaxGlyph();
+  }
+
+  function setupTitlebar() {
+    if (!window.__TAURI__) return;
+    const appWindow = window.__TAURI__.window.getCurrentWindow();
+    setupWindowButtons(appWindow);
+    setupNavButtons();
+    setupMenus();
+    setupMaxGlyph(appWindow);
   }
 
   /* ---------- 标题栏主题跟随（DSH 浅/深） ---------- */
@@ -261,24 +298,10 @@
     // 主通道：Web 插件（运行在 DSH iframe 里）双向 postMessage：
     // 主题中继 + 会话导航状态（后退/前进键的可用性）。
     // 外壳每 3 秒 ping 一次，插件回以最新状态——单发丢失也能自愈。
-    const postToFrame = (payload) => {
-      const frame = document.getElementById("dsh-frame");
-      if (!frame || !frameUrl || !frame.contentWindow) return;
-      try {
-        frame.contentWindow.postMessage(payload, new URL(frameUrl).origin);
-      } catch {
-        /* 忽略 */
-      }
-    };
-
     window.addEventListener("message", (event) => {
       const data = event.data;
       if (!data || !frameUrl) return;
-      try {
-        if (event.origin !== new URL(frameUrl).origin) return;
-      } catch {
-        return;
-      }
+      if (event.origin !== frameOrigin) return;
       if (data.__tbNavStatus) {
         const status = data.__tbNavStatus || {};
         const back = document.getElementById("tb-back");
@@ -299,7 +322,8 @@
       });
     });
 
-    // 心跳探针：每 3 秒 ping 一次，插件回以最新导航状态
+    // 心跳探针：每 3 秒 ping 一次，插件回以最新导航状态。
+    // 主窗口常驻应用全生命周期，窗口销毁即应用退出，无需显式清理句柄。
     setInterval(() => {
       postToFrame({ __tbNav: "ping" });
     }, 3000);
