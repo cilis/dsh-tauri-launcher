@@ -1,0 +1,29 @@
+# 启动器自身命令的 ACL 权限。
+#
+# 背景：外壳页改由 http://127.0.0.1:3081 承载（与 DSH 的 127.0.0.1:3080 同站，
+# 见 shell_server.rs），对 tauri 而言这是「远程 origin」。tauri 对远程 origin 的
+# 应用命令强制走 ACL（tauri/src/webview/mod.rs：远程来源必须由带 remote 的
+# capability 显式授权），否则 IPC 直接以 "Command X not allowed by ACL" 拒绝。
+#
+# 本文件声明的是「应用自身」命令（非插件命令），因此 identifier 不带插件前缀，
+# capability 里也直接按 allow-launcher-commands 引用。
+
+[[permission]]
+identifier = "allow-launcher-commands"
+description = "允许外壳页（远程 origin）与 settings/exiting 窗口调用启动器自身的命令。"
+commands.allow = [
+  "check_dsh",
+  "install_dsh",
+  "launch_dsh",
+  "restart_dsh_external",
+  "stop_dsh",
+  "get_settings",
+  "set_autostart_setting",
+  "set_global_shortcut_setting",
+  "set_desktop_shortcut_setting",
+  "set_terminate_harness_on_exit_setting",
+  "close_settings",
+  "open_settings_window",
+  "open_in_browser",
+  "quit_app",
+]
