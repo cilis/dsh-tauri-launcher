@@ -10,12 +10,14 @@
 //! - [`markers`]  — 心跳/退出标记文件轮询
 //! - [`theme`]    — 系统主题检测、图标刷新与事件广播
 //! - [`tray`]     — 托盘菜单构建与事件分发
+//! - [`shell_server`] — 外壳页本地静态服务（127.0.0.1:3081，与 DSH 同站）
 
 mod dsh;
 mod harness;
 mod icons;
 mod markers;
 mod settings;
+mod shell_server;
 mod shutdown;
 mod theme;
 mod tray;
@@ -24,6 +26,13 @@ mod windows;
 use tauri::Manager;
 
 use crate::harness::AppState;
+
+/// 启动外壳静态服务。必须在 tauri 建窗口之前调用：主窗口 URL 指向
+/// `http://127.0.0.1:3081`（与 DSH 的 127.0.0.1:3080 同站，SameSite=Strict
+/// cookie 才可用），服务未就绪时主窗口会加载失败。
+pub fn start_shell_server() {
+    shell_server::start();
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
