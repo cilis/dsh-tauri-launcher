@@ -31,7 +31,7 @@ pub struct AppState {
     pub pid: Mutex<Option<u32>>,
     /// 该进程是否由本应用启动（true 时退出必须终止；false 表示接管了已有实例）。
     pub owned: AtomicBool,
-    /// 已确认可用的 Web GUI 地址。
+    /// 已确认可用的 Web GUI 地址（新版自启动时为带 token 的握手 URL）。
     pub url: Mutex<Option<String>>,
     /// 退出流程是否已开始（幂等标记，防止重复显示退出动画/重复清理）。
     pub exiting: AtomicBool,
@@ -50,6 +50,9 @@ pub struct LaunchInfo {
     pub url: String,
     pub port: u16,
     pub owned: bool,
+    /// 接管的是新版实例且无法确定 WebView 是否已持有鉴权 cookie
+    /// （true 时页面可能显示 401，外壳据此给出引导提示）。
+    pub auth_uncertain: bool,
 }
 
 fn tail_text(state: &AppState) -> String {
@@ -61,14 +64,17 @@ fn tail_text(state: &AppState) -> String {
 }
 
 /// 日志泵：把子进程输出流逐行写入共享环形缓冲（上限 256 行，超出丢最旧）。
-/// stdout/stderr 共用同一实现，仅 tag 不同。
-fn spawn_log_pump<R>(reader: R, tag: &'static str, tail: Arc<Mutex<VecDeque<String>>>)
+/// stdout/stderr 共用同一实现，仅 tag 不同；`on_line` 在入队前收到原始行，
+/// 供调用方做内容匹配（如捕获 `dsh web:` 启动 URL 行）。
+fn spawn_log_pump<R, F>(reader: R, tag: &'static str, tail: Arc<Mutex<VecDeque<String>>>, on_line: F)
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
+    F: Fn(&str) + Send + Sync + 'static,
 {
     tokio::spawn(async move {
         let mut lines = BufReader::new(reader).lines();
         while let Ok(Some(line)) = lines.next_line().await {
+            on_line(&line);
             if let Ok(mut q) = tail.lock() {
                 if q.len() >= 256 {
                     q.pop_front();
@@ -146,10 +152,17 @@ pub(crate) fn orphan_harness(app: &AppHandle) {
 
 /// 确保 DeepSeek Harness 已启动并返回可访问的 Web GUI 地址。
 /// 若默认端口上已有实例在运行则直接接管；否则拉起 `dsh web` 并等待就绪。
+///
+/// 就绪判定为双信号（新旧版本兼容，加法式扩展）：
+/// - 旧版（无鉴权）：裸 `GET /` 响应体含 `__DSH_BOOT__` 指纹 → 用干净 URL；
+/// - 新版（token+cookie 鉴权）：裸 `GET /` 返回 401，且子进程 stdout 已打印
+///   `dsh web: <带 token 的 URL>` 行 → 用该 URL 交给 WebView 完成握手
+///   （303 重定向 + 签 cookie），旧版永远不满足此条件、行为不变。
 #[tauri::command]
 pub(crate) async fn launch_dsh(state: State<'_, AppState>) -> Result<LaunchInfo, String> {
     // 1) 端口上已有 DeepSeek Harness 实例 → 直接接管（退出时不终止它）。
-    if dsh::is_dsh_serving(dsh::DSH_PORT).await {
+    let probe = dsh::probe_web(dsh::DSH_PORT).await;
+    if probe == dsh::ProbeResult::MarkerHit || probe == dsh::ProbeResult::AuthRequired {
         let url = dsh::DSH_URL.to_string();
         *state.url.lock().map_err(|_| "应用状态不可用")? = Some(url.clone());
         state.owned.store(false, Ordering::SeqCst);
@@ -157,6 +170,9 @@ pub(crate) async fn launch_dsh(state: State<'_, AppState>) -> Result<LaunchInfo,
             url,
             port: dsh::DSH_PORT,
             owned: false,
+            // 新版实例的 token 只有启动它的进程知道：接管后能否渲染取决于
+            // WebView 是否已持有有效签名 cookie（此前成功握过手即可无缝接管）。
+            auth_uncertain: probe == dsh::ProbeResult::AuthRequired,
         });
     }
 
@@ -185,24 +201,45 @@ pub(crate) async fn launch_dsh(state: State<'_, AppState>) -> Result<LaunchInfo,
     let mut child = cmd.spawn().map_err(|e| format!("无法启动 dsh 进程：{e}"))?;
     let pid = child.id();
 
+    // 新版 DSH 的启动 URL（带进程 token）只经 stdout 的 `dsh web:` 行对外；
+    // 日志泵逐行回调匹配并捕获，旧版不打印该行时保持 None、自然走指纹路径。
+    let captured: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let tail = state.log_tail.clone();
+    let capture_slot = captured.clone();
     if let Some(out) = child.stdout.take() {
-        spawn_log_pump(out, "stdout", tail.clone());
+        spawn_log_pump(out, "stdout", tail.clone(), move |line| {
+            if let Some(url) = dsh::parse_web_url_line(line) {
+                if let Ok(mut slot) = capture_slot.lock() {
+                    *slot = Some(url);
+                }
+            }
+        });
     }
     if let Some(err) = child.stderr.take() {
-        spawn_log_pump(err, "stderr", tail);
+        spawn_log_pump(err, "stderr", tail, |_| {});
     }
 
     state.child.lock().await.replace(child);
     *state.pid.lock().map_err(|_| "应用状态不可用")? = pid;
     state.owned.store(true, Ordering::SeqCst);
-    let url = dsh::DSH_URL.to_string();
 
     // 3) 等待 Web GUI 就绪（首次启动可能需要初始化，留足超时）。
     let deadline = Instant::now() + Duration::from_secs(180);
     loop {
-        if dsh::is_dsh_serving(dsh::DSH_PORT).await {
-            break;
+        let ready_url = match dsh::probe_web(dsh::DSH_PORT).await {
+            dsh::ProbeResult::MarkerHit => Some(dsh::DSH_URL.to_string()),
+            // 401 证明新版服务已就绪；只有同时捕获到 token URL 才算可用。
+            dsh::ProbeResult::AuthRequired => captured.lock().ok().and_then(|slot| slot.clone()),
+            _ => None,
+        };
+        if let Some(url) = ready_url {
+            *state.url.lock().map_err(|_| "应用状态不可用")? = Some(url.clone());
+            return Ok(LaunchInfo {
+                url,
+                port: dsh::DSH_PORT,
+                owned: true,
+                auth_uncertain: false,
+            });
         }
         let exited = state
             .child
@@ -227,11 +264,4 @@ pub(crate) async fn launch_dsh(state: State<'_, AppState>) -> Result<LaunchInfo,
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
-
-    *state.url.lock().map_err(|_| "应用状态不可用")? = Some(url.clone());
-    Ok(LaunchInfo {
-        url,
-        port: dsh::DSH_PORT,
-        owned: true,
-    })
 }

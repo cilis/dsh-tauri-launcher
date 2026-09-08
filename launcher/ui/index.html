@@ -97,5 +97,12 @@
 
     <!-- DSH 承载区：整页跳转改为 iframe，标题栏得以常驻 -->
     <iframe id="dsh-frame" class="hidden" title="DeepSeek Harness"></iframe>
+
+    <!-- 接管外部启动的新版实例时的鉴权提示：无法自动完成 token 握手时引导用户；
+         插件握手成功（页面正常加载）后自动隐藏 -->
+    <div id="auth-hint" class="hidden">
+      <span id="auth-hint-text">检测到正在运行的新版 DeepSeek Harness 实例。若下方页面未正常加载，请在浏览器中使用该实例启动时打印的 URL，或关闭该实例后重试。</span>
+      <button id="auth-hint-close" title="关闭提示">×</button>
+    </div>
   </body>
 </html>

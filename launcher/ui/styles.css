@@ -363,6 +363,48 @@ body {
   display: none;
 }
 
+/* 接管外部新版实例时的鉴权提示条：盖在 iframe 底部，
+   插件握手成功后自动隐藏（见 main.js 的 showAuthHint/hideAuthHint） */
+
+#auth-hint {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(640px, calc(100% - 32px));
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--tb-menu-bg, #e9ecf2);
+  color: var(--tb-fg, #0f1115);
+  border: 1px solid var(--tb-menu-border, rgba(0, 0, 0, 0.1));
+  box-shadow: var(--tb-menu-shadow, 0 10px 34px rgba(15, 23, 42, 0.14));
+  font-size: 12px;
+  line-height: 1.5;
+  z-index: 10;
+}
+
+#auth-hint.hidden {
+  display: none;
+}
+
+#auth-hint-close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+#auth-hint-close:hover {
+  opacity: 1;
+}
+
 @keyframes float {
   0%,
   100% {
