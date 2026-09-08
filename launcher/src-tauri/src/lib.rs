@@ -34,6 +34,7 @@ pub fn run() {
             harness::check_dsh,
             harness::install_dsh,
             harness::launch_dsh,
+            harness::restart_dsh_external,
             harness::stop_dsh,
             settings::get_settings,
             settings::set_autostart_setting,

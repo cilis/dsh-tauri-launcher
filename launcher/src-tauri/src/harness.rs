@@ -152,14 +152,19 @@ pub(crate) fn orphan_harness(app: &AppHandle) {
 
 /// 确保 DeepSeek Harness 已启动并返回可访问的 Web GUI 地址。
 /// 若默认端口上已有实例在运行则直接接管；否则拉起 `dsh web` 并等待就绪。
+#[tauri::command]
+pub(crate) async fn launch_dsh(state: State<'_, AppState>) -> Result<LaunchInfo, String> {
+    launch_dsh_inner(&state).await
+}
+
+/// 核心实现（与 tauri 解耦）：被 [`launch_dsh`] 与 [`restart_dsh_external`] 复用。
 ///
 /// 就绪判定为双信号（新旧版本兼容，加法式扩展）：
 /// - 旧版（无鉴权）：裸 `GET /` 响应体含 `__DSH_BOOT__` 指纹 → 用干净 URL；
 /// - 新版（token+cookie 鉴权）：裸 `GET /` 返回 401，且子进程 stdout 已打印
 ///   `dsh web: <带 token 的 URL>` 行 → 用该 URL 交给 WebView 完成握手
 ///   （303 重定向 + 签 cookie），旧版永远不满足此条件、行为不变。
-#[tauri::command]
-pub(crate) async fn launch_dsh(state: State<'_, AppState>) -> Result<LaunchInfo, String> {
+async fn launch_dsh_inner(state: &AppState) -> Result<LaunchInfo, String> {
     // 1) 端口上已有 DeepSeek Harness 实例 → 直接接管（退出时不终止它）。
     let probe = dsh::probe_web(dsh::DSH_PORT).await;
     if probe == dsh::ProbeResult::MarkerHit || probe == dsh::ProbeResult::AuthRequired {
@@ -264,4 +269,34 @@ pub(crate) async fn launch_dsh(state: State<'_, AppState>) -> Result<LaunchInfo,
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
+}
+
+/// 接管外部实例后的一键重启：终止占用端口的外部实例，再按自启动路径
+/// 拉起由本应用托管的实例（此后退出应用时会一并终止它）。
+///
+/// 仅用于"接管了非本应用启动的实例、但 WebView 无鉴权 cookie、页面停在
+/// 401"的场景；由外壳提示条上的「关闭并重启」按钮显式触发（用户确认后）。
+#[tauri::command]
+pub(crate) async fn restart_dsh_external(state: State<'_, AppState>) -> Result<LaunchInfo, String> {
+    if state.owned.load(Ordering::SeqCst) {
+        return Err("当前实例由本启动器托管，无需重启接管。".to_string());
+    }
+    // 端口仍被占用 → 终止外部实例并等待释放（taskkill 返回后进程退出可能有延迟）。
+    if !matches!(dsh::probe_web(dsh::DSH_PORT).await, dsh::ProbeResult::NoResponse) {
+        let killed = dsh::kill_processes_on_port(dsh::DSH_PORT).await?;
+        if killed == 0 {
+            return Err("未能终止占用端口 3080 的进程，请手动关闭该实例后重试。".to_string());
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            if matches!(dsh::probe_web(dsh::DSH_PORT).await, dsh::ProbeResult::NoResponse) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        if !matches!(dsh::probe_web(dsh::DSH_PORT).await, dsh::ProbeResult::NoResponse) {
+            return Err("端口 3080 上的外部实例未能及时退出，请手动关闭后重试。".to_string());
+        }
+    }
+    launch_dsh_inner(&state).await
 }
