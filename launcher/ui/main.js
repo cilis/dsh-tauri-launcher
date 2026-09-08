@@ -74,6 +74,27 @@
   }
 
   /**
+   * 接管外部启动的新版实例时的鉴权提示：
+   * Rust 侧探测到 401 但拿不到对方进程的 token，页面能否渲染取决于 WebView
+   * 是否已持有签名 cookie。提示条在插件握手成功（页面正常加载）后自动隐藏。
+   */
+  let authHintDismissed = false;
+
+  function showAuthHint() {
+    if (authHintDismissed) return;
+    document.getElementById("auth-hint")?.classList.remove("hidden");
+  }
+
+  function hideAuthHint() {
+    document.getElementById("auth-hint")?.classList.add("hidden");
+  }
+
+  function dismissAuthHint() {
+    authHintDismissed = true;
+    hideAuthHint();
+  }
+
+  /**
    * 向 iframe 发送 postMessage（外壳 → 插件 的唯一出口）。
    * 载荷协议字段（__tbNav / __tbNavStatus / __tbSystemTheme 等）与
    * lib/client.js 一一对应，新增字段须两侧同步（协议单源化见优化报告 v2 B5）。
@@ -302,6 +323,8 @@
       const data = event.data;
       if (!data || !frameUrl) return;
       if (event.origin !== frameOrigin) return;
+      // 插件消息 = DSH 页面已正常加载，接管场景的鉴权提示随之失效
+      hideAuthHint();
       if (data.__tbNavStatus) {
         const status = data.__tbNavStatus || {};
         const back = document.getElementById("tb-back");
@@ -419,6 +442,9 @@
       await sleep(900);
       // 不再整页跳转：交给 iframe 承载，标题栏得以常驻
       showFrame(info.url);
+      // 接管的是外部新版实例且无法确定 WebView 是否已持有鉴权 cookie：
+      // 页面若加载失败会停在 401，提示条引导用户处理
+      if (info.auth_uncertain) showAuthHint();
     } catch (e) {
       showError(`操作失败：${formatError(e)}`);
     }
@@ -427,6 +453,7 @@
   window.addEventListener("DOMContentLoaded", () => {
     setupTitlebar();
     setupThemeFollow();
+    document.getElementById("auth-hint-close")?.addEventListener("click", dismissAuthHint);
     document.getElementById("retry-btn")?.addEventListener("click", () => {
       const log = document.getElementById("install-log");
       if (log) log.innerHTML = "";

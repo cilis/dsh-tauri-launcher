@@ -244,25 +244,84 @@ where
     }
 }
 
-/// 探测指定端口上是否正在运行 DeepSeek Harness Web GUI。
-pub async fn is_dsh_serving(port: u16) -> bool {
+/// 新版 DSH 未鉴权 401 响应体中的固定提示文本：证明"服务已就绪但需 token/cookie"。
+pub const DSH_AUTH_BODY_MARKER: &str = "dsh web authentication required";
+
+/// 探测结果分类（端口上的服务身份）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeResult {
+    /// 响应体含 `__DSH_BOOT__` 指纹：旧版 DSH（无鉴权层），可直接使用干净 URL。
+    MarkerHit,
+    /// 新版 DSH 的鉴权 401：服务已就绪，但页面内容需完成 token→cookie 握手后才有。
+    AuthRequired,
+    /// 端口有响应但不是 DeepSeek Harness。
+    Other,
+    /// 连接失败或响应超时：端口上没有可用服务。
+    NoResponse,
+}
+
+/// 探测 127.0.0.1:port 上运行的 Web 服务身份。
+///
+/// 发送裸 `GET /`（不带 token/cookie）：
+/// - 旧版 DSH 直接返回带 `__DSH_BOOT__` 指纹的 index → [`ProbeResult::MarkerHit`]；
+/// - 新版 DSH 对未鉴权请求返回 401（body 含 [`DSH_AUTH_BODY_MARKER`]）→
+///   [`ProbeResult::AuthRequired`]，作为"服务器已就绪"的信号；
+/// - 其他响应 → [`ProbeResult::Other`]；连接失败/超时 → [`ProbeResult::NoResponse`]。
+pub async fn probe_web(port: u16) -> ProbeResult {
     let addr = format!("127.0.0.1:{port}");
     let Ok(conn) = tokio::time::timeout(Duration::from_secs(2), tokio::net::TcpStream::connect(&addr)).await else {
-        return false;
+        return ProbeResult::NoResponse;
     };
     let Ok(mut stream) = conn else {
-        return false;
+        return ProbeResult::NoResponse;
     };
     let req = format!("GET / HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
     if tokio::time::timeout(Duration::from_secs(2), stream.write_all(req.as_bytes()))
         .await
         .is_err()
     {
-        return false;
+        return ProbeResult::NoResponse;
     }
     let mut buf = Vec::new();
-    let _ = tokio::time::timeout(Duration::from_secs(3), stream.read_to_end(&mut buf)).await;
-    String::from_utf8_lossy(&buf).contains(DSH_MARKER)
+    if tokio::time::timeout(Duration::from_secs(3), stream.read_to_end(&mut buf))
+        .await
+        .is_err()
+    {
+        return ProbeResult::NoResponse;
+    }
+    let text = String::from_utf8_lossy(&buf);
+    if text.contains(DSH_MARKER) {
+        return ProbeResult::MarkerHit;
+    }
+    let status = text
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|code| code.parse::<u16>().ok());
+    if status == Some(401) && text.contains(DSH_AUTH_BODY_MARKER) {
+        return ProbeResult::AuthRequired;
+    }
+    ProbeResult::Other
+}
+
+/// 从 `dsh web` 子进程的 stdout 行解析启动 URL（新版 DSH 带 token 查询参数）。
+///
+/// 只接受回环地址 + 默认端口的 http(s) URL，行内噪声（如 ` (LAN: ...)` 后缀）
+/// 自动忽略；不匹配时返回 None——旧版本无论打印与否都不影响调用方
+/// （就绪判定自然回退到指纹探测路径）。
+pub fn parse_web_url_line(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("dsh web: ")?;
+    let url = rest.split_whitespace().next()?;
+    let (scheme, remainder) = url.split_once("://")?;
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+    let authority = remainder.split(['/', '?', '#']).next()?;
+    let (host, port) = authority.rsplit_once(':')?;
+    if (host != "127.0.0.1" && host != "localhost") || port != DSH_PORT.to_string() {
+        return None;
+    }
+    Some(url.to_string())
 }
 
 #[cfg(test)]
@@ -309,5 +368,82 @@ mod tests {
 
         std::env::remove_var("DSH_LAUNCHER_NODE");
         std::env::remove_var("DSH_LAUNCHER_NPM_ROOT");
+    }
+
+    /// probe_web 分类回归：指纹命中 / 鉴权 401 / 其他服务 / 无响应。
+    /// 用本机临时 TcpListener 回放固定响应，不依赖真实 DSH 安装，CI 可跑。
+    #[tokio::test]
+    async fn probe_web_classifies_serving_states() {
+        async fn serve_once(response: &'static str) -> u16 {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("绑定测试端口失败");
+            let port = listener.local_addr().expect("读取端口失败").port();
+            tokio::spawn(async move {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut buf = [0u8; 4096];
+                let _ = tokio::time::timeout(Duration::from_secs(2), sock.read(&mut buf)).await;
+                let _ = tokio::time::timeout(Duration::from_secs(2), sock.write_all(response.as_bytes())).await;
+            });
+            port
+        }
+
+        let port = serve_once(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\n\r\n<html><script>window.__DSH_BOOT__</script></html>",
+        )
+        .await;
+        assert_eq!(probe_web(port).await, ProbeResult::MarkerHit);
+
+        let port = serve_once(
+            "HTTP/1.1 401 Unauthorized\r\ncontent-type: text/plain\r\n\r\ndsh web authentication required; reopen the URL printed by dsh web.\n",
+        )
+        .await;
+        assert_eq!(probe_web(port).await, ProbeResult::AuthRequired);
+
+        let port = serve_once("HTTP/1.1 200 OK\r\n\r\nhello from another app").await;
+        assert_eq!(probe_web(port).await, ProbeResult::Other);
+
+        // 端口上没有任何服务：绑定后立刻释放取得空闲端口，探测应判 NoResponse。
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("绑定测试端口失败");
+        let port = listener.local_addr().expect("读取端口失败").port();
+        drop(listener);
+        assert_eq!(probe_web(port).await, ProbeResult::NoResponse);
+    }
+
+    /// dsh web: URL 行解析：新版带 token、旧版无 token、LAN 后缀、
+    /// 噪声行、越界端口与非回环地址。
+    #[test]
+    fn parse_web_url_line_accepts_loopback_token_urls() {
+        assert_eq!(
+            parse_web_url_line("dsh web: http://127.0.0.1:3080/?token=abc123"),
+            Some("http://127.0.0.1:3080/?token=abc123".to_string())
+        );
+        assert_eq!(
+            parse_web_url_line("dsh web: http://localhost:3080/?token=abc"),
+            Some("http://localhost:3080/?token=abc".to_string())
+        );
+        assert_eq!(
+            parse_web_url_line("dsh web: http://127.0.0.1:3080/"),
+            Some("http://127.0.0.1:3080/".to_string())
+        );
+        assert_eq!(
+            parse_web_url_line(
+                "dsh web: http://127.0.0.1:3080/?token=abc (LAN: http://192.168.1.5:3080/?token=abc)"
+            ),
+            Some("http://127.0.0.1:3080/?token=abc".to_string())
+        );
+        // 日志泵传入的是原始行（不带 [stdout] 前缀），带前缀等噪声一律拒绝。
+        assert_eq!(
+            parse_web_url_line("[stdout] dsh web: http://127.0.0.1:3080/?token=abc"),
+            None
+        );
+        assert_eq!(parse_web_url_line("some other log line"), None);
+        assert_eq!(parse_web_url_line("dsh web: not a url"), None);
+        assert_eq!(parse_web_url_line("dsh web: http://127.0.0.1:9999/?token=abc"), None);
+        assert_eq!(parse_web_url_line("dsh web: http://192.168.1.5:3080/?token=abc"), None);
     }
 }
