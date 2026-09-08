@@ -12,6 +12,7 @@
       {
         "label": "main",
         "title": "DeepSeek Harness",
+        "url": "http://127.0.0.1:3081/index.html",
         "width": 1280,
         "height": 800,
         "minWidth": 960,
