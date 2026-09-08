@@ -405,6 +405,29 @@ body {
   opacity: 1;
 }
 
+/* 「关闭并重启」动作按钮：两步点击防误触（main.js 的 restartExternalInstance） */
+
+#auth-hint-restart {
+  border: 1px solid var(--tb-menu-border, rgba(0, 0, 0, 0.1));
+  background: var(--tb-bg, #f9fafb);
+  color: var(--tb-danger, #ec1313);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+#auth-hint-restart:hover {
+  background: var(--tb-hover, rgba(17, 24, 39, 0.08));
+}
+
+#auth-hint-restart:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 @keyframes float {
   0%,
   100% {

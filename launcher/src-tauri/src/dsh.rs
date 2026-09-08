@@ -324,6 +324,72 @@ pub fn parse_web_url_line(line: &str) -> Option<String> {
     Some(url.to_string())
 }
 
+/// 解析 `netstat -ano` 输出中本地地址列为指定端口的 TCP 行 PID（去重、跳过 0）。
+///
+/// 只匹配第二列（本地地址）以 `:<port>` 结尾的行，避免误杀"远程地址恰好是
+/// 该端口"的客户端连接；不匹配状态列（其文本随系统语言变化），PID 为 0 的
+/// 行（如 TIME_WAIT）跳过。独立纯函数便于回归测试。
+pub fn parse_netstat_listener_pids(output: &str, port: u16) -> Vec<u32> {
+    let suffix = format!(":{port}");
+    let mut pids = Vec::new();
+    for line in output.lines() {
+        let mut fields = line.split_whitespace();
+        if fields.next() != Some("TCP") {
+            continue;
+        }
+        let Some(local) = fields.next() else {
+            continue;
+        };
+        if !local.ends_with(&suffix) {
+            continue;
+        }
+        let Some(pid) = fields.last().and_then(|f| f.parse::<u32>().ok()) else {
+            continue;
+        };
+        if pid == 0 || pids.contains(&pid) {
+            continue;
+        }
+        pids.push(pid);
+    }
+    pids
+}
+
+/// 终止占用指定端口的进程，返回成功终止的进程数。
+/// Windows 经 `netstat -ano` 定位 PID 后 `taskkill /T /F` 结束整棵进程树；
+/// 其他平台（规划中）best-effort 经 `lsof` 定位后 `kill -9`。
+pub async fn kill_processes_on_port(port: u16) -> Result<usize, String> {
+    #[cfg(windows)]
+    {
+        let out = run_capture("cmd", &["/C", "netstat", "-ano", "-p", "tcp"])
+            .map_err(|e| format!("无法枚举端口占用：{e}"))?;
+        let pids = parse_netstat_listener_pids(&out, port);
+        let mut killed = 0;
+        for pid in pids {
+            let res = tokio::process::Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .creation_flags(0x0800_0000)
+                .output()
+                .await;
+            if res.is_ok_and(|r| r.status.success()) {
+                killed += 1;
+            }
+        }
+        Ok(killed)
+    }
+    #[cfg(not(windows))]
+    {
+        let script = format!("lsof -nP -iTCP:{port} -sTCP:LISTEN -t");
+        let out = run_capture("sh", &["-c", &script])
+            .map_err(|e| format!("无法枚举端口占用：{e}"))?;
+        let mut killed = 0;
+        for pid in out.lines().filter_map(|l| l.trim().parse::<u32>().ok()) {
+            let _ = run_capture("kill", &["-9", &pid.to_string()]);
+            killed += 1;
+        }
+        Ok(killed)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -445,5 +511,27 @@ mod tests {
         assert_eq!(parse_web_url_line("dsh web: not a url"), None);
         assert_eq!(parse_web_url_line("dsh web: http://127.0.0.1:9999/?token=abc"), None);
         assert_eq!(parse_web_url_line("dsh web: http://192.168.1.5:3080/?token=abc"), None);
+    }
+
+    /// netstat 输出解析回归：只取本地地址列为目标端口的 TCP 行 PID
+    /// （去重、跳过 PID 0、不误杀远程地址为目标端口的客户端连接）。
+    #[test]
+    fn parse_netstat_listener_pids_finds_listener_only() {
+        let sample = "\
+活动连接
+
+  协议  本地地址          外部地址        状态           PID
+  TCP    127.0.0.1:3080         0.0.0.0:0              LISTENING       1234
+  TCP    [::1]:3080             [::]:0                 LISTENING       1234
+  TCP    127.0.0.1:53421        127.0.0.1:3080         ESTABLISHED     9999
+  TCP    127.0.0.1:3081         0.0.0.0:0              LISTENING       7777
+  TCP    127.0.0.1:3080         127.0.0.1:53421        TIME_WAIT       0
+";
+        assert_eq!(parse_netstat_listener_pids(sample, 3080), vec![1234]);
+        assert_eq!(parse_netstat_listener_pids(sample, 3081), vec![7777]);
+        assert_eq!(
+            parse_netstat_listener_pids(sample, 9999),
+            Vec::<u32>::new()
+        );
     }
 }

@@ -94,6 +94,46 @@
     hideAuthHint();
   }
 
+  /** 「关闭并重启」是否处于武装状态（首击后 4 秒内再击才执行，防误触）。 */
+  let restartArmed = false;
+
+  /**
+   * 提示条上的「关闭并重启」：两步点击确认后，终止外部实例并由启动器
+   * 重新拉起托管实例（restart_dsh_external）。重启成功后重新导航 iframe，
+   * 新实例的 token URL 会完成握手；失败则回到出错页（可点重试）。
+   */
+  async function restartExternalInstance() {
+    const btn = document.getElementById("auth-hint-restart");
+    if (!btn || btn.disabled) return;
+    if (!restartArmed) {
+      restartArmed = true;
+      btn.textContent = "再次点击确认重启";
+      setTimeout(() => {
+        restartArmed = false;
+        btn.textContent = "关闭并重启";
+      }, 4000);
+      return;
+    }
+    restartArmed = false;
+    btn.disabled = true;
+    btn.textContent = "正在重启…";
+    try {
+      const info = await invoke("restart_dsh_external");
+      hideAuthHint();
+      // 新实例由本启动器托管（owned=true），直接承载带 token 的握手 URL
+      showFrame(info.url);
+      btn.disabled = false;
+      btn.textContent = "关闭并重启";
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = "关闭并重启";
+      // 出错页在启动卡片内：接管态下 #app 已被隐藏，需恢复
+      document.getElementById("app")?.classList.remove("hidden");
+      document.getElementById("titlebar")?.classList.add("hidden");
+      showError(`操作失败：${formatError(e)}`);
+    }
+  }
+
   /**
    * 向 iframe 发送 postMessage（外壳 → 插件 的唯一出口）。
    * 载荷协议字段（__tbNav / __tbNavStatus / __tbSystemTheme 等）与
@@ -454,6 +494,9 @@
     setupTitlebar();
     setupThemeFollow();
     document.getElementById("auth-hint-close")?.addEventListener("click", dismissAuthHint);
+    document
+      .getElementById("auth-hint-restart")
+      ?.addEventListener("click", () => void restartExternalInstance());
     document.getElementById("retry-btn")?.addEventListener("click", () => {
       const log = document.getElementById("install-log");
       if (log) log.innerHTML = "";

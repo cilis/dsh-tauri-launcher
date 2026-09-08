@@ -101,7 +101,8 @@
     <!-- 接管外部启动的新版实例时的鉴权提示：无法自动完成 token 握手时引导用户；
          插件握手成功（页面正常加载）后自动隐藏 -->
     <div id="auth-hint" class="hidden">
-      <span id="auth-hint-text">检测到正在运行的新版 DeepSeek Harness 实例。若下方页面未正常加载，请在浏览器中使用该实例启动时打印的 URL，或关闭该实例后重试。</span>
+      <span id="auth-hint-text">检测到正在运行的新版 DeepSeek Harness 实例。若下方页面未正常加载，可点击「关闭并重启」由启动器接管（会终止外部实例及其中的会话），或在浏览器中使用该实例启动时打印的 URL。</span>
+      <button id="auth-hint-restart">关闭并重启</button>
       <button id="auth-hint-close" title="关闭提示">×</button>
     </div>
   </body>
