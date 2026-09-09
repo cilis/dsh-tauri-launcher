@@ -71,6 +71,29 @@
    属可接受降级（退回齿轮）。
 5. 客户端错误需**常驻显示**（自动刷新不得清空），诊断信息仅在出错时展示。
 
+## 外壳页承载与 DSH 鉴权适配（2026-09-09）
+
+桌面应用主窗口**不再**直接使用 tauri 资产协议（`http://tauri.localhost`），改由内置
+静态服务承载于 `http://127.0.0.1:3081`（`src-tauri/src/shell_server.rs`，编译期
+`include_str!` 内嵌 `ui/` 三文件）。
+
+- **为什么换**：新版 `dsh web` 的会话 cookie 为 `SameSite=Strict`，而 SameSite 比较
+  「站点」时**忽略端口、只比主机**。`tauri.localhost` 与 DSH 的 `127.0.0.1:3080`
+  跨站 → WebView2 拒收 iframe 内 token 握手 303 响应的 `Set-Cookie` → iframe 永久
+  白页（仅显示一行 401 英文提示）。改到 `127.0.0.1:3081` 后二者同站（同主机、不同
+  端口），cookie 正常签发与发送。
+- **启动顺序**：服务在 `main.rs` 中**同步 bind 完成后**才让 tauri 建窗口；异步 bind
+  会与建窗口竞态，主窗口命中 `ERR_CONNECTION_REFUSED` 且不重试（表现为白窗）。
+- **ACL**：外壳页对 tauri 而言是远程 origin，其应用命令必须显式授权
+  （`permissions/launcher.toml` 的 `allow-launcher-commands` + capability 的
+  `remote.urls`），否则 IPC 报 `Command X not allowed by ACL`。
+- **鉴权握手**：`launch_dsh` 捕获子进程 stdout 的 `dsh web: <token URL>` 行并导航
+  iframe 完成 token→cookie 交换；旧版 DSH 仍走裸 `GET /` 的 `__DSH_BOOT__` 指纹路径。
+  接管外部实例但 WebView2 无 cookie 时，外壳提示条提供「关闭并重启」
+  （`restart_dsh_external`：netstat 定位占用进程 → taskkill → 自启动完成握手）。
+- settings/exiting 两个辅助窗口仍走 tauri 资产协议（不涉及 DSH cookie）；插件侧无需
+  改动（父 origin 由 `document.referrer` 推导，与外壳 origin 无关）。
+
 ## 状态模型（浏览器侧）
 
 `desktop: true | false | null`（运行中/已停止/状态未知）+ `shortcut: bool`。
