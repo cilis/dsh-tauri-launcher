@@ -3,8 +3,8 @@
 //! 具体的检测/安装/端口探测逻辑在 [`crate::dsh`]（与 tauri 解耦、可独立测试）。
 
 use std::collections::VecDeque;
-use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::process::{Command as StdCommand, Stdio};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -17,26 +17,130 @@ use crate::dsh;
 /// 事件名：npm 安装日志逐行广播（外壳安装页实时显示）。
 pub(crate) const EVENT_INSTALL_OUTPUT: &str = "install-output";
 
-/// 应用全局状态：被托管的 dsh 子进程及其诊断信息。
+/// 托管状态：本应用与 dsh 子进程的关系（单一锁下的三态机）。
 ///
-/// 一致性约定（历史实现，见优化报告 v2 B1）：`child`/`pid`/`owned` 三个字段
-/// 分散在三种同步原语中，任何操作都必须按“先 child 后 pid、最后 owned”的
-/// 顺序推进；`try_lock` vs 阻塞锁的选择取决于调用上下文（异步上下文内禁止
-/// 阻塞锁）。阶段二计划收敛为单一 `HarnessProcess` 状态机。
+/// 取代原先分散在 `child` / `pid` / `owned` 三个字段、三种同步原语里的隐式
+/// 约定（见优化报告 v2 B1：调用方必须记住“先 child 后 pid、最后 owned”的
+/// 顺序，且要按上下文选择 try_lock 或阻塞锁）。现在状态迁移整体发生，锁也
+/// 统一为 std Mutex——所有操作都是同步的（子进程探测 `try_wait` 本身同步；
+/// 终止动作先取出句柄再执行，不跨 await 持锁），因此不再有阻塞锁 vs
+/// try_lock 的区分。
+#[derive(Default)]
+pub enum HarnessProcess {
+    /// 未托管任何实例（尚未启动，或已终止/已放弃）。
+    #[default]
+    None,
+    /// 接管的外部实例：本应用不拥有它，退出时不终止。
+    Adopted,
+    /// 由本应用启动并托管：持有子进程句柄与 PID（退出时可终止整棵进程树）。
+    Owned {
+        child: tokio::process::Child,
+        /// 子进程 PID；极少数情况下取不到（进程已被回收）时为 None，
+        /// 此时只能按句柄终止，无法 taskkill 整棵进程树。
+        pid: Option<u32>,
+    },
+}
+
+/// 从托管状态中取出的自有子进程，提供「终止」与「放弃」两种归宿。
+/// 取出即状态置回 [`HarnessProcess::None`]，后续操作与状态锁无关。
+pub(crate) struct OwnedChild {
+    child: tokio::process::Child,
+    pid: Option<u32>,
+}
+
+impl OwnedChild {
+    /// 强制终止整棵进程树（Windows `taskkill /T /F`，其他平台 `kill -9`）。
+    /// 同步实现：退出路径可能位于非异步上下文（托盘事件、`RunEvent::Exit`），
+    /// taskkill 通常几十毫秒，代价可接受；句柄另做 `start_kill` 兜底。
+    pub(crate) fn terminate(mut self) {
+        if let Some(pid) = self.pid {
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                let _ = StdCommand::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/T", "/F"])
+                    .creation_flags(0x0800_0000)
+                    .status();
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = StdCommand::new("kill").args(["-9", &pid.to_string()]).status();
+            }
+        }
+        // 兜底：taskkill 后进程通常已退出，kill_on_drop 的二次 kill 无害。
+        let _ = self.child.start_kill();
+    }
+
+    /// 放弃托管：进程作为孤儿继续运行，句柄交由系统回收。
+    /// `forget` 阻止 drop 触发 kill_on_drop。
+    pub(crate) fn orphan(self) {
+        std::mem::forget(self.child);
+    }
+}
+
+impl HarnessProcess {
+    /// 是否由本应用启动并托管（true 时退出必须终止）。
+    pub(crate) fn is_owned(&self) -> bool {
+        matches!(self, HarnessProcess::Owned { .. })
+    }
+
+    /// 记录“接管了外部实例”（本应用不拥有它）。
+    /// 若此前托管过自有进程，先放弃之（不终止）——与历史行为一致：
+    /// 接管路径不会终止此前拉起的实例。
+    pub(crate) fn adopt(&mut self) {
+        if let Some(previous) = self.take_owned() {
+            previous.orphan();
+        }
+        *self = HarnessProcess::Adopted;
+    }
+
+    /// 记录“由本应用启动”的托管进程（同时取代旧状态）。
+    pub(crate) fn own(&mut self, child: tokio::process::Child, pid: Option<u32>) {
+        if let Some(previous) = self.take_owned() {
+            previous.orphan();
+        }
+        *self = HarnessProcess::Owned { child, pid };
+    }
+
+    /// 取出自有子进程并置回未托管；无自有进程时返回 None。
+    pub(crate) fn take_owned(&mut self) -> Option<OwnedChild> {
+        match std::mem::take(self) {
+            HarnessProcess::Owned { child, pid } => Some(OwnedChild { child, pid }),
+            other => {
+                *self = other;
+                None
+            }
+        }
+    }
+
+    /// 自有子进程是否已退出（同步探测，供启动等待循环使用）。
+    pub(crate) fn try_wait(&mut self) -> Option<std::process::ExitStatus> {
+        match self {
+            HarnessProcess::Owned { child, .. } => child.try_wait().ok().flatten(),
+            _ => None,
+        }
+    }
+}
+
+/// 应用全局状态：托管的 dsh 子进程状态、就绪地址与诊断信息。
 #[derive(Default)]
 pub struct AppState {
-    /// 由本应用启动的 dsh 子进程。
-    pub child: tokio::sync::Mutex<Option<tokio::process::Child>>,
-    /// 子进程 PID（用于 taskkill /T 结束整棵进程树）。
-    pub pid: Mutex<Option<u32>>,
-    /// 该进程是否由本应用启动（true 时退出必须终止；false 表示接管了已有实例）。
-    pub owned: AtomicBool,
+    /// 托管的 dsh 子进程状态（三态机，见 [`HarnessProcess`]）。
+    pub proc: Mutex<HarnessProcess>,
     /// 已确认可用的 Web GUI 地址（新版自启动时为带 token 的握手 URL）。
     pub url: Mutex<Option<String>>,
     /// 退出流程是否已开始（幂等标记，防止重复显示退出动画/重复清理）。
     pub exiting: AtomicBool,
     /// 子进程最近的输出（诊断用）。
     pub log_tail: Arc<Mutex<VecDeque<String>>>,
+}
+
+impl AppState {
+    /// 访问托管状态。锁中毒（持锁线程 panic）时取回内部值继续——
+    /// 启动/退出路径不应因 poison 而卡死，语义等同历史实现的“忽略锁错误”。
+    pub(crate) fn proc_guard(&self) -> std::sync::MutexGuard<'_, HarnessProcess> {
+        self.proc.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 }
 
 #[derive(Serialize, Clone)]
@@ -104,50 +208,27 @@ pub(crate) async fn install_dsh(app: AppHandle) -> Result<String, String> {
     .await
 }
 
-/// 终止由本应用启动的 dsh 进程树（异步版本）。
-pub(crate) async fn kill_child(state: &AppState) {
-    let pid = state.pid.lock().ok().and_then(|mut g| g.take());
-    if let Some(pid) = pid {
-        #[cfg(windows)]
-        let res = tokio::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .creation_flags(0x0800_0000)
-            .output()
-            .await;
-        #[cfg(not(windows))]
-        let res = tokio::process::Command::new("kill")
-            .args(["-9", &pid.to_string()])
-            .output()
-            .await;
-        let _ = res;
+/// 终止由本应用启动的 dsh 进程树（未托管任何自有进程时为空操作）。
+pub(crate) fn kill_child(state: &AppState) {
+    if let Some(owned) = state.proc_guard().take_owned() {
+        owned.terminate();
     }
-    if let Some(mut child) = state.child.lock().await.take() {
-        let _ = child.kill().await;
-    }
-    state.owned.store(false, Ordering::SeqCst);
 }
 
 #[tauri::command]
 pub(crate) async fn stop_dsh(state: State<'_, AppState>) -> Result<(), String> {
-    kill_child(&state).await;
+    kill_child(&state);
     Ok(())
 }
 
-/// 放弃对 dsh 子进程的托管（孤儿继续运行），并清空托管状态。同步版本。
+/// 放弃对 dsh 子进程的托管（孤儿继续运行），并清空托管状态。
 pub(crate) fn orphan_harness(app: &AppHandle) {
     let state = app.state::<AppState>();
-    // 用 try_lock 而非 blocking_lock：本函数可能在 tokio 异步上下文
-    // （标记轮询）被调用，阻塞锁会卡死 worker 线程。
-    if let Ok(mut guard) = state.child.try_lock() {
-        if let Some(child) = guard.take() {
-            // forget 阻止 drop 触发 kill_on_drop，孤儿继续运行；句柄由系统回收。
-            std::mem::forget(child);
-        }
+    // 先取出结果，令 MutexGuard 在本语句结束时即释放（其生命周期短于 state 守卫）。
+    let owned = state.proc_guard().take_owned();
+    if let Some(owned) = owned {
+        owned.orphan();
     }
-    if let Ok(mut guard) = state.pid.lock() {
-        guard.take();
-    }
-    state.owned.store(false, Ordering::SeqCst);
 }
 
 /// 确保 DeepSeek Harness 已启动并返回可访问的 Web GUI 地址。
@@ -170,7 +251,7 @@ async fn launch_dsh_inner(state: &AppState) -> Result<LaunchInfo, String> {
     if probe == dsh::ProbeResult::MarkerHit || probe == dsh::ProbeResult::AuthRequired {
         let url = dsh::DSH_URL.to_string();
         *state.url.lock().map_err(|_| "应用状态不可用")? = Some(url.clone());
-        state.owned.store(false, Ordering::SeqCst);
+        state.proc_guard().adopt();
         return Ok(LaunchInfo {
             url,
             port: dsh::DSH_PORT,
@@ -224,9 +305,7 @@ async fn launch_dsh_inner(state: &AppState) -> Result<LaunchInfo, String> {
         spawn_log_pump(err, "stderr", tail, |_| {});
     }
 
-    state.child.lock().await.replace(child);
-    *state.pid.lock().map_err(|_| "应用状态不可用")? = pid;
-    state.owned.store(true, Ordering::SeqCst);
+    state.proc_guard().own(child, pid);
 
     // 3) 等待 Web GUI 就绪（首次启动可能需要初始化，留足超时）。
     let deadline = Instant::now() + Duration::from_secs(180);
@@ -246,12 +325,7 @@ async fn launch_dsh_inner(state: &AppState) -> Result<LaunchInfo, String> {
                 auth_uncertain: false,
             });
         }
-        let exited = state
-            .child
-            .lock()
-            .await
-            .as_mut()
-            .and_then(|c| c.try_wait().ok().flatten());
+        let exited = state.proc_guard().try_wait();
         if let Some(status) = exited {
             let reason = tail_text(&state);
             let hint = if reason.contains("EADDRINUSE") {
@@ -264,7 +338,7 @@ async fn launch_dsh_inner(state: &AppState) -> Result<LaunchInfo, String> {
             ));
         }
         if Instant::now() >= deadline {
-            kill_child(&state).await;
+            kill_child(&state);
             return Err(format!("启动超时（180 秒）：\n{}", tail_text(&state)));
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -278,7 +352,7 @@ async fn launch_dsh_inner(state: &AppState) -> Result<LaunchInfo, String> {
 /// 401"的场景；由外壳提示条上的「关闭并重启」按钮显式触发（用户确认后）。
 #[tauri::command]
 pub(crate) async fn restart_dsh_external(state: State<'_, AppState>) -> Result<LaunchInfo, String> {
-    if state.owned.load(Ordering::SeqCst) {
+    if state.proc_guard().is_owned() {
         return Err("当前实例由本启动器托管，无需重启接管。".to_string());
     }
     // 端口仍被占用 → 终止外部实例并等待释放（taskkill 返回后进程退出可能有延迟）。
