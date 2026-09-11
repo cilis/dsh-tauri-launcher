@@ -134,10 +134,32 @@
     }
   }
 
+  /* ---------- 外壳 ↔ 插件 postMessage 协议 ---------- */
+  // 消息统一信封 { v, type, payload }。为兼容旧版对端（旧插件配新 exe，或
+  // 反之），发送时同时保留旧字段、解析时信封优先并回退旧字段；下个大版本再
+  // 移除旧字段。字段与超时清单见项目 docs/architecture.md。
+  const MSG_VERSION = 1;
+  const MSG = {
+    NAV_COMMAND: "navCommand", // 外壳 → 插件：dir = back | forward | ping
+    SYSTEM_THEME: "systemTheme", // 外壳 → 插件：scheme = light | dark
+    NAV_STATUS: "navStatus", // 插件 → 外壳：back / forward 可用性
+    THEME_SYNC: "themeSync", // 插件 → 外壳：scheme + 六色 token
+  };
+
+  /** 读取信封载荷；版本或类型不匹配时返回 null（调用方回退旧字段）。 */
+  function readEnvelope(data, type) {
+    if (!data || data.v !== MSG_VERSION || data.type !== type) return null;
+    return data.payload && typeof data.payload === "object" ? data.payload : null;
+  }
+
+  /** 发送导航命令（back / forward / ping）：旧字段 + 信封双发。 */
+  function sendNavCommand(dir) {
+    postToFrame({ __tbNav: dir, v: MSG_VERSION, type: MSG.NAV_COMMAND, payload: { dir } });
+  }
+
   /**
    * 向 iframe 发送 postMessage（外壳 → 插件 的唯一出口）。
-   * 载荷协议字段（__tbNav / __tbNavStatus / __tbSystemTheme 等）与
-   * lib/client.js 一一对应，新增字段须两侧同步（协议单源化见优化报告 v2 B5）。
+   * 载荷字段与 lib/client.js 的 MSG 常量一一对应（协议见 docs/architecture.md）。
    */
   function postToFrame(payload) {
     const frame = document.getElementById("dsh-frame");
@@ -168,8 +190,8 @@
    * 的跨源操作，由插件在 DSH 页面内同源执行（应用层会话导航栈，见 client.js）。
    */
   function setupNavButtons() {
-    document.getElementById("tb-back")?.addEventListener("click", () => postToFrame({ __tbNav: "back" }));
-    document.getElementById("tb-forward")?.addEventListener("click", () => postToFrame({ __tbNav: "forward" }));
+    document.getElementById("tb-back")?.addEventListener("click", () => sendNavCommand("back"));
+    document.getElementById("tb-forward")?.addEventListener("click", () => sendNavCommand("forward"));
   }
 
   /** 标题栏菜单（文件 / 帮助）。 */
@@ -360,30 +382,32 @@
       if (event.origin !== frameOrigin) return;
       // 插件消息 = DSH 页面已正常加载，接管场景的鉴权提示随之失效
       hideAuthHint();
-      if (data.__tbNavStatus) {
-        const status = data.__tbNavStatus || {};
+      const navStatus = readEnvelope(data, MSG.NAV_STATUS) || data.__tbNavStatus;
+      if (navStatus) {
         const back = document.getElementById("tb-back");
         const fwd = document.getElementById("tb-forward");
-        if (back) back.disabled = !status.back;
-        if (fwd) fwd.disabled = !status.forward;
+        if (back) back.disabled = !navStatus.back;
+        if (fwd) fwd.disabled = !navStatus.forward;
         return;
       }
-      if (data.__dshLauncherTheme !== 1) return;
+      const envelopeTheme = readEnvelope(data, MSG.THEME_SYNC);
+      if (!envelopeTheme && data.__dshLauncherTheme !== 1) return;
+      const theme = envelopeTheme || data;
       pluginThemeApplied = true;
-      applyTitlebarTheme(data.scheme, {
-        bg: data.bg,
-        fg: data.fg,
-        menuBg: data.menuBg,
-        menuBorder: data.menuBorder,
-        sep: data.sep,
-        danger: data.danger,
+      applyTitlebarTheme(theme.scheme, {
+        bg: theme.bg,
+        fg: theme.fg,
+        menuBg: theme.menuBg,
+        menuBorder: theme.menuBorder,
+        sep: theme.sep,
+        danger: theme.danger,
       });
     });
 
     // 心跳探针：每 3 秒 ping 一次，插件回以最新导航状态。
     // 主窗口常驻应用全生命周期，窗口销毁即应用退出，无需显式清理句柄。
     setInterval(() => {
-      postToFrame({ __tbNav: "ping" });
+      sendNavCommand("ping");
     }, 3000);
 
     // 桌面端系统主题跟随：WebView2 的 prefers-color-scheme 不随 Windows 变化
@@ -393,7 +417,13 @@
       void window.__TAURI__.event
         .listen("launcher-system-theme", (e) => {
           if (e.payload === "light" || e.payload === "dark") {
-            postToFrame({ __tbSystemTheme: e.payload });
+            // 双发：信封（新）+ 旧字段（兼容旧版插件）；下个大版本移除旧字段。
+            postToFrame({
+              __tbSystemTheme: e.payload,
+              v: MSG_VERSION,
+              type: MSG.SYSTEM_THEME,
+              payload: { scheme: e.payload },
+            });
           }
         })
         .catch(() => {});
