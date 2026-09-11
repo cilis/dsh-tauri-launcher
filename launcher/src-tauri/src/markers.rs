@@ -48,7 +48,8 @@ pub(crate) fn spawn_marker_task(handle: AppHandle) {
                     .unwrap_or(false);
                 if requested && fresh {
                     let _ = std::fs::remove_file(&quit_path);
-                    shutdown::quit_via_marker(&handle).await;
+                    // begin_exit 为同步入口：按设置决定处置方式并在后台完成清理。
+                    shutdown::begin_exit(&handle);
                     break;
                 }
             }
