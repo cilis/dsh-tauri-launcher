@@ -94,6 +94,47 @@
 - settings/exiting 两个辅助窗口仍走 tauri 资产协议（不涉及 DSH cookie）；插件侧无需
   改动（父 origin 由 `document.referrer` 推导，与外壳 origin 无关）。
 
+## 外壳 ↔ 插件消息协议（postMessage）
+
+外壳页（`ui/main.js`，承载于 `http://127.0.0.1:3081`）与 iframe 内插件的双向通道。
+两侧各自定义同一套常量（外壳与插件的 `MSG`），字段以本节为准：
+
+| 方向 | type | payload | 旧字段（兼容期） |
+| --- | --- | --- | --- |
+| 外壳 → 插件 | `navCommand` | `{ dir: 'back' \| 'forward' \| 'ping' }` | `__tbNav` |
+| 外壳 → 插件 | `systemTheme` | `{ scheme: 'light' \| 'dark' }` | `__tbSystemTheme` |
+| 插件 → 外壳 | `navStatus` | `{ back, forward }` | `__tbNavStatus` |
+| 插件 → 外壳 | `themeSync` | `{ scheme, bg, fg, menuBg, menuBorder, sep, danger }` | `__dshLauncherTheme: 1` + 同名字段 |
+
+信封格式 `{ v: 1, type, payload }`。**兼容期**（2026-09 起）：发送端双发（信封 +
+旧字段），接收端双解析（`readEnvelope(data, type)` 优先，失配回退旧字段），未知
+`type` 静默忽略——因此旧 exe + 新插件、新 exe + 旧插件均可工作；下个大版本移除
+旧字段。
+
+其他约定：
+
+- 双方都校验 `event.origin`：外壳比对 iframe URL 的 origin，插件比对由
+  `document.referrer` 推导的父 origin（兜底 `http://tauri.localhost`）；
+- 插件 → 外壳用 `postMessage(..., '*')` 投递（WebView2 对虚拟主机的精确
+  targetOrigin 匹配有丢弃嫌疑），安全性由接收端 origin 校验保证；
+- 浏览器直开（非 iframe）时插件自动不启用导航与系统主题跟随。
+
+## 协议超时与常量清单
+
+| 常量 | 值 | 位置 | 语义 |
+| --- | --- | --- | --- |
+| 心跳写入周期 | 1 秒 | `markers.rs` | 桌面应用写 `.dsh-heartbeat` |
+| 心跳新鲜窗口 | 4 秒（`freshSecs`） | `lib/index.js` | 插件判定“运行中” |
+| 退出标记新鲜窗口 | 60 秒 | `markers.rs` | `.dsh-quit` 内容 `1` 的时效 |
+| 启动等待心跳 | 20 秒 | `lib/index.js` | 拉起 exe 后的就绪窗口 |
+| 退出确认 | 12 × 500ms（≈6 秒） | `lib/index.js` | 双信号确认上限 |
+| 启动就绪等待 | 180 秒 | `harness.rs` | 等 `dsh web` 就绪 |
+| 接管重启端口释放等待 | 10 秒 | `harness.rs` | 终止外部实例后等端口 |
+| 外壳 ping 周期 | 3 秒 | `ui/main.js` | 导航状态自愈 |
+| 服务重试梯子 | 12 × 500ms | `lib/client.js` | theme / sessions 就绪重试 |
+| 跳转锁超时 | 1.5 秒 | `lib/client.js` | 会话栈 pendingJump 兜底 |
+| 快捷方式存在性缓存 | 5 秒 | `lib/index.js` | 减少 PowerShell 调用 |
+
 ## 状态模型（浏览器侧）
 
 `desktop: true | false | null`（运行中/已停止/状态未知）+ `shortcut: bool`。
