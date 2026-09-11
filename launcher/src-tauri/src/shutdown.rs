@@ -35,30 +35,13 @@ fn kill_dsh_port_owner() {
     }
 }
 
-/// 同步清理：托盘退出与进程退出时的兜底，结束由本应用启动的 dsh 进程树。
+/// 同步清理：终止由本应用启动的 dsh 进程树（“退出时结束 Harness”第一步）。
+/// 与 [`harness::kill_child`] 共用同一状态迁移与终止实现——原先这里有一份
+/// 独立的“取 pid → 同步 taskkill → try_lock 子进程 → start_kill”实现，
+/// 阶段二收敛后仅保留调用点的差异（同步上下文可直接调用，无需 block_on）。
 fn cleanup_on_exit(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let pid = state.pid.lock().ok().and_then(|mut g| g.take());
-    if let Some(pid) = pid {
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            let _ = StdCommand::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/T", "/F"])
-                .creation_flags(0x0800_0000)
-                .status();
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = StdCommand::new("kill").args(["-9", &pid.to_string()]).status();
-        }
-    }
-    if let Ok(mut guard) = state.child.try_lock() {
-        if let Some(child) = guard.as_mut() {
-            let _ = child.start_kill();
-        }
-    }
-    state.owned.store(false, Ordering::SeqCst);
+    harness::kill_child(&state);
 }
 
 /// 按“退出时是否结束 Harness”设置统一执行的退出动作，由托盘退出、
