@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# 沙箱内 npm 命令的本地缓存目录（--cache <repo>\.npm-cache-tmp，见 AGENTS.md）
+.npm-cache-tmp/
+
 # Rust / Tauri build output
 launcher/src-tauri/target/
 launcher/src-tauri/gen/
