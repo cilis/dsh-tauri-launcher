@@ -12,6 +12,7 @@ use std::process::Command as StdCommand;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::dsh;
+use crate::harness::AppState;
 use crate::icons;
 use crate::theme;
 
@@ -138,24 +139,49 @@ pub(crate) fn open_settings_window(app: AppHandle) {
     }
 }
 
-/// 主窗口自绘标题栏菜单：用系统默认浏览器打开 DSH Web。
+/// 外壳可请求打开的外链：key → URL（**唯一来源**，前端只传 key）。
+/// 优化报告 v2 B4：原先 URL 表同时维护在 Rust 白名单与前端 HELP_URLS，
+/// 新增外链要改两处且容易漏；现在前端不持有任何 URL，由本表解析。
+const EXTERNAL_LINKS: [(&str, &str); 2] = [
+    ("website", "https://www.deepseek.com/harness/"),
+    ("docs", "https://deepseek-harness.github.io/deepseek-harness/guide/quickstart"),
+];
+
+/// 「在浏览器中打开」本地 DSH 的 key：URL 由应用状态给出——新版 DSH 的
+/// 地址带进程 token（只有启动它的本应用知道），须原样交给系统浏览器才能
+/// 完成鉴权握手；状态为空时回退到默认本地地址。
+const LINK_DSL: &str = "dsl";
+
+/// 主窗口自绘标题栏菜单：用系统默认浏览器打开白名单目标。
 /// 经 explorer.exe 打开（不走 cmd shell），URL 无解释执行风险；
-/// 只接受白名单前缀（本地 DSH 地址 + 官网/文档），防御性校验。
-/// 注意：白名单与外链菜单的 URL 列表分居 Rust/JS 两侧（`ui/main.js` 的
-/// HELP_URLS），新增外链须同步修改两处（协议单源化见优化报告 v2 B4）。
+/// 前端只传 key，URL 由 [`EXTERNAL_LINKS`] 或应用状态解析——
+/// 不存在“页面传入任意地址”的路径。
 #[tauri::command]
-pub(crate) fn open_in_browser(url: String) -> Result<(), String> {
-    const ALLOWED_PREFIXES: [&str; 3] = [
-        dsh::DSH_URL,
-        "https://www.deepseek.com/harness",
-        "https://deepseek-harness.github.io/deepseek-harness",
-    ];
-    if !ALLOWED_PREFIXES.iter().any(|prefix| url.starts_with(prefix)) {
-        return Err(format!(
-            "仅允许打开白名单地址（{}、官网与文档）。",
-            dsh::DSH_URL
-        ));
+pub(crate) fn open_in_browser(app: AppHandle, key: String) -> Result<(), String> {
+    let url = resolve_link(&app, &key)?;
+    open_with_system_browser(&url)
+}
+
+/// 解析外链 key（URL 的唯一来源）。
+fn resolve_link(app: &AppHandle, key: &str) -> Result<String, String> {
+    if key == LINK_DSL {
+        let current = app
+            .state::<AppState>()
+            .url
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone());
+        return Ok(current.unwrap_or_else(|| dsh::DSH_URL.to_string()));
     }
+    EXTERNAL_LINKS
+        .iter()
+        .find(|(name, _)| *name == key)
+        .map(|(_, url)| (*url).to_string())
+        .ok_or_else(|| format!("未知的外链标识：{key}"))
+}
+
+/// 用系统默认浏览器打开 URL（经 explorer.exe，不经 cmd shell）。
+fn open_with_system_browser(url: &str) -> Result<(), String> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -164,6 +190,10 @@ pub(crate) fn open_in_browser(url: String) -> Result<(), String> {
             .creation_flags(0x0800_0000)
             .spawn()
             .map_err(|e| format!("调用系统浏览器失败：{e}"))?;
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = url;
     }
     Ok(())
 }

@@ -233,11 +233,10 @@
       .getElementById("menu-browser")
       ?.addEventListener("click", () => {
         closeMenus();
-        if (frameUrl) {
-          void invoke("open_in_browser", { url: frameUrl }).catch((e) =>
-            console.error("浏览器打开失败", e),
-          );
-        }
+        // URL 由后端按 key 解析（新版 DSH 的地址含进程 token，由应用侧持有）
+        void invoke("open_in_browser", { key: "dsl" }).catch((e) =>
+          console.error("浏览器打开失败", e),
+        );
       });
 
     document.getElementById("menu-quit")?.addEventListener("click", () => {
@@ -245,16 +244,12 @@
     });
 
     // 帮助菜单：默认浏览器打开官网 / 文档。
-    // ⚠️ URL 与 Rust 侧 open_in_browser 白名单分居两侧，新增外链须同步修改
-    // （lib.rs windows::open_in_browser 的 ALLOWED_PREFIXES）。
-    const HELP_URLS = {
-      website: "https://www.deepseek.com/harness/",
-      docs: "https://deepseek-harness.github.io/deepseek-harness/guide/quickstart",
-    };
-    for (const [id, url] of Object.entries(HELP_URLS)) {
-      document.getElementById(`help-${id}`)?.addEventListener("click", () => {
+    // ⚠️ URL 表唯一维护在 Rust 侧（windows.rs::EXTERNAL_LINKS），前端只传 key；
+    // 新增外链须在此加一个按钮 id（help-<key>）并在 Rust 表里加同名条目。
+    for (const key of ["website", "docs"]) {
+      document.getElementById(`help-${key}`)?.addEventListener("click", () => {
         closeMenus();
-        void invoke("open_in_browser", { url }).catch((e) =>
+        void invoke("open_in_browser", { key }).catch((e) =>
           console.error("浏览器打开失败", e),
         );
       });
