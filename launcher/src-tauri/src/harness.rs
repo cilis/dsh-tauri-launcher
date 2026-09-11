@@ -209,7 +209,8 @@ pub(crate) async fn install_dsh(app: AppHandle) -> Result<String, String> {
 }
 
 /// 终止由本应用启动的 dsh 进程树（未托管任何自有进程时为空操作）。
-pub(crate) fn kill_child(state: &AppState) {
+/// 启动超时、`stop_dsh` 命令与退出清理共用本函数。
+pub(crate) fn terminate_harness(state: &AppState) {
     if let Some(owned) = state.proc_guard().take_owned() {
         owned.terminate();
     }
@@ -217,7 +218,7 @@ pub(crate) fn kill_child(state: &AppState) {
 
 #[tauri::command]
 pub(crate) async fn stop_dsh(state: State<'_, AppState>) -> Result<(), String> {
-    kill_child(&state);
+    terminate_harness(&state);
     Ok(())
 }
 
@@ -338,7 +339,7 @@ async fn launch_dsh_inner(state: &AppState) -> Result<LaunchInfo, String> {
             ));
         }
         if Instant::now() >= deadline {
-            kill_child(&state);
+            terminate_harness(&state);
             return Err(format!("启动超时（180 秒）：\n{}", tail_text(&state)));
         }
         tokio::time::sleep(Duration::from_millis(500)).await;

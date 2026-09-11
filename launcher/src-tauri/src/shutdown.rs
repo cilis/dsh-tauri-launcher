@@ -1,9 +1,12 @@
-//! 退出流程：按「退出时是否结束 Harness」设置执行清理（终止本启动器托管
-//! 的 dsh 进程树，或放弃托管让 Harness 孤儿继续运行）、退出进度窗口编排，
+//! 退出流程：按「退出时是否结束 Harness」处置托管的进程、编排退出动画，
 //! 以及退出相关命令。
 //!
-//! 托盘退出、标题栏菜单退出、`.dsh-quit` 标记退出、进程退出四条路径最终
-//! 都收敛到 [`begin_exit`] / [`exit_launcher`] 两条入口。
+//! 退出触发路径（托盘菜单、标题栏菜单、`.dsh-quit` 标记、进程退出事件）
+//! 收敛到两个入口：
+//! - [`begin_exit`]：用户/插件发起的退出（幂等 + 退出动画 + 后台收尾）；
+//! - [`exit_launcher`]：最终清理（同步，可安全用于 `RunEvent::Exit` 等
+//!   非异步上下文）。
+//! 两者最终都经 [`dispose_harness`]，处置方式由 [`ExitMode`] 决定。
 
 use std::process::Command as StdCommand;
 use std::sync::atomic::Ordering;
@@ -35,38 +38,57 @@ fn kill_dsh_port_owner() {
     }
 }
 
-/// 同步清理：终止由本应用启动的 dsh 进程树（“退出时结束 Harness”第一步）。
-/// 与 [`harness::kill_child`] 共用同一状态迁移与终止实现——原先这里有一份
-/// 独立的“取 pid → 同步 taskkill → try_lock 子进程 → start_kill”实现，
-/// 阶段二收敛后仅保留调用点的差异（同步上下文可直接调用，无需 block_on）。
-fn cleanup_on_exit(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    harness::kill_child(&state);
+/// 退出时对 Harness 的处置方式（由 `.dsh-config.json` 的设置决定）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExitMode {
+    /// 保留：放弃托管，Harness 作为孤儿继续运行（默认）。
+    Keep,
+    /// 结束：终止本启动器托管的进程树，并兜底关闭占用 DSH 端口的进程。
+    Terminate,
 }
 
-/// 按“退出时是否结束 Harness”设置统一执行的退出动作，由托盘退出、
-/// 标记退出与进程退出共用：
-/// - 结束：终止本启动器托管的 dsh 进程树，并兜底关闭 DSH 端口进程；
-/// - 保留（默认）：放弃托管，Harness 孤儿继续运行。
-pub(crate) fn exit_launcher(app: &AppHandle) {
-    if settings::load_config().terminate_harness_on_exit {
-        cleanup_on_exit(app);
-        kill_dsh_port_owner();
-    } else {
-        harness::orphan_harness(app);
+impl ExitMode {
+    /// 读取当前设置（唯一读取点：退出决策只在这里落一次）。
+    pub(crate) fn from_config() -> Self {
+        if settings::load_config().terminate_harness_on_exit {
+            ExitMode::Terminate
+        } else {
+            ExitMode::Keep
+        }
     }
 }
 
-/// 统一退出入口：按“退出时结束 Harness”设置执行退出。
-/// 需要结束时先显示退出进度窗口，再在后台线程完成清理，
-/// 避免同步 taskkill 阻塞 UI 事件循环导致动画白屏。
+/// 退出清理（同步）：按模式处置托管的 Harness。
+/// 幂等——重复调用时状态已是“未托管”，第二次为空操作。
+fn dispose_harness(app: &AppHandle, mode: ExitMode) {
+    match mode {
+        ExitMode::Terminate => {
+            let state = app.state::<AppState>();
+            harness::terminate_harness(&state);
+            // 兜底：端口上的实例可能是接管来的外部实例，不在托管状态里。
+            kill_dsh_port_owner();
+        }
+        ExitMode::Keep => harness::orphan_harness(app),
+    }
+}
+
+/// 最终清理入口（同步）：按当前设置处置托管的 Harness。
+/// 供 `RunEvent::Exit` 与 [`begin_exit`] 的后台任务调用；非异步上下文安全。
+pub(crate) fn exit_launcher(app: &AppHandle) {
+    dispose_harness(app, ExitMode::from_config());
+}
+
+/// 统一退出入口：按设置执行退出。需要结束时先显示退出进度窗口，再在后台
+/// 任务中完成清理，避免同步 taskkill 阻塞 UI 事件循环导致动画白屏。
+/// 退出决策只读一次设置，并把模式传给最终清理（避免重复读盘解析）。
 pub(crate) fn begin_exit(app: &AppHandle) {
-    if !settings::load_config().terminate_harness_on_exit {
+    let mode = ExitMode::from_config();
+    if mode == ExitMode::Keep {
         // 保留 Harness：退出很快，同样走后台任务，避免在异步上下文
         // （标记轮询）内同步执行退出清理。
         let handle = app.clone();
         tauri::async_runtime::spawn(async move {
-            exit_launcher(&handle);
+            dispose_harness(&handle, ExitMode::Keep);
             handle.exit(0);
         });
         return;
@@ -78,7 +100,7 @@ pub(crate) fn begin_exit(app: &AppHandle) {
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
     {
-        exit_launcher(app);
+        dispose_harness(app, ExitMode::Terminate);
         return;
     }
     windows::close_visible_windows(app);
@@ -87,15 +109,9 @@ pub(crate) fn begin_exit(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         // 先让退出动画窗口渲染出首帧，再执行同步清理（taskkill / 端口兜底）。
         tokio::time::sleep(Duration::from_millis(200)).await;
-        exit_launcher(&handle);
+        dispose_harness(&handle, ExitMode::Terminate);
         handle.exit(0);
     });
-}
-
-/// 响应“仅退出桌面应用”请求（`.dsh-quit` 标记）：按设置结束或保留 Harness。
-/// 标记轮询（markers.rs）中调用；幂等性由 begin_exit 内的 exiting 标记保证。
-pub(crate) async fn quit_via_marker(app: &AppHandle) {
-    begin_exit(app);
 }
 
 /// 主窗口自绘标题栏菜单：退出应用（与托盘「退出」同一条 begin_exit 路径，
