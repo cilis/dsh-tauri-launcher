@@ -138,8 +138,11 @@ fit common deployments):
     launcherExe: ''            # absolute path to the desktop-app exe; empty = auto-detect
     launcherDirs: []           # candidate exe directories; empty = built-in defaults
     freshSecs: 4               # heartbeat "freshness window" in seconds (must be > write interval)
-    shortcutName: 'DeepSeek Harness.lnk'   # desktop-shortcut file name
 ```
+
+> Note: the former `shortcutName` key was removed (2026-09) — the shortcut file name is a
+> single constant shared by the plugin and the desktop app (`DeepSeek Harness.lnk`);
+> maintaining it on both sides produced two differently-named `.lnk` files.
 
 ## Desktop App Build & Release
 

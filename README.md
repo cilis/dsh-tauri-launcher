@@ -131,8 +131,10 @@ dsh plugin --profile web remove @lenorin/dsh-tauri-launcher
     launcherExe: ''            # 桌面应用 exe 绝对路径；空 = 自动探测
     launcherDirs: []           # 候选 exe 目录列表；空 = 内置默认候选
     freshSecs: 4               # 心跳“新鲜窗口”（秒），须大于心跳写入周期
-    shortcutName: 'DeepSeek Harness.lnk'   # 桌面快捷方式文件名
 ```
+
+> 注：原 `shortcutName` 配置项已移除（2026-09）——快捷方式文件名由插件与桌面应用
+> 共用同一常量（`DeepSeek Harness.lnk`）：两侧各自维护名字会导致各建出一个 .lnk。
 
 ## 桌面应用构建与发布
 
