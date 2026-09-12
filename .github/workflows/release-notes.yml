@@ -1,0 +1,117 @@
+# 发行版说明同步：把 CHANGELOG.md 里各版本的小节写进 GitHub Release 与 Gitee 发行版的
+# 正文。CHANGELOG.md 是唯一来源，所以本工作流既是「回填历史版本说明」的一次性工具，
+# 也是「说明写错了要改」的长期入口——改完 CHANGELOG 重跑即可，不必重新打 tag。
+#
+# 触发：
+#   - push 到 main 且改动了 CHANGELOG.md / 尾部模板 / 生成脚本（含首次回填，幂等）；
+#   - 手动 Run workflow（可只同步某一个 tag，默认同步全部）。
+#
+# 两条硬约束：
+#   1. 只更新**已存在**的发行版，绝不创建——手动触发时 github.ref_name 是分支名，
+#      拿它去建发行版会建出名为 main 的发行版；
+#   2. 正文一律由 .github/scripts/release-notes.ps1 生成，不在这里拼文案。
+name: release-notes
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - CHANGELOG.md
+      - .github/release-footer.md
+      - .github/scripts/release-notes.ps1
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '只同步这一个 tag（例：v1.0.8）；留空 = 同步 CHANGELOG.md 中的全部版本'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+      REPO: ${{ github.repository }}
+      TAG_INPUT: ${{ github.event.inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 同步发行版正文（GitHub + Gitee）
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $script = './.github/scripts/release-notes.ps1'
+          $giteeBase = 'https://gitee.com/api/v5/repos/cilis/dsh-tauri-launcher'
+          $ghApi = "https://api.github.com/repos/$env:REPO"
+          $ghHeaders = @{
+            Authorization          = "Bearer $env:GH_TOKEN"
+            Accept                 = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+            'User-Agent'           = 'dsh-release-notes'
+          }
+          $ua = @{ 'User-Agent' = 'dsh-release-notes' }
+
+          function Get-Status($ErrorRecord) {
+            try { return [int]$ErrorRecord.Exception.Response.StatusCode } catch { return 0 }
+          }
+
+          # 待同步的版本：手动输入优先，否则取 CHANGELOG.md 里的全部小节
+          $tagInput = ($env:TAG_INPUT | Out-String).Trim()
+          if ($tagInput) {
+            $tags = @($tagInput)
+          } else {
+            $tags = @(& $script -ListVersions)
+            if ($LASTEXITCODE -ne 0) { throw '无法从 CHANGELOG.md 列出任何版本。' }
+          }
+          if (-not $tags) { throw '没有待同步的版本。' }
+          Write-Host "待同步：$($tags -join ', ')"
+
+          $updated = 0
+          foreach ($tag in $tags) {
+            $tag = "$tag".Trim()
+            if (-not $tag) { continue }
+
+            # 1) GitHub 侧必须已有同名发行版
+            try {
+              $rel = Invoke-RestMethod -Method Get -Uri "$ghApi/releases/tags/$tag" -Headers $ghHeaders
+            } catch {
+              if ((Get-Status $_) -eq 404) { Write-Warning "GitHub 没有 $tag 发行版（未发布？），跳过。"; continue }
+              throw
+            }
+
+            # 2) 生成两种形态的正文（GitHub 中英、Gitee 仅中文）
+            $ghFile = Join-Path $env:RUNNER_TEMP "notes-$tag.github.md"
+            $gtFile = Join-Path $env:RUNNER_TEMP "notes-$tag.gitee.md"
+            & $script -Tag $tag -Mode github -OutFile $ghFile
+            if ($LASTEXITCODE -ne 0) { throw "生成 $tag 的 GitHub 正文失败。" }
+            & $script -Tag $tag -Mode gitee -OutFile $gtFile
+            if ($LASTEXITCODE -ne 0) { throw "生成 $tag 的 Gitee 正文失败。" }
+
+            # 3) 覆盖 GitHub 发行版正文（同内容重复执行结果一致，天然幂等）
+            $ghBody = [IO.File]::ReadAllText($ghFile, [Text.Encoding]::UTF8)
+            $payload = [Text.Encoding]::UTF8.GetBytes((@{ body = $ghBody } | ConvertTo-Json -Depth 3))
+            Invoke-RestMethod -Method Patch -Uri "$ghApi/releases/$($rel.id)" -Headers $ghHeaders `
+              -ContentType 'application/json; charset=utf-8' -Body $payload | Out-Null
+            Write-Host "GitHub $tag：正文已更新（$($ghBody.Length) 字符）"
+
+            # 4) Gitee 侧同上（tag 未同步或未配置 token 时告警跳过，不算失败）
+            if (-not $env:GITEE_TOKEN) { Write-Warning '未配置 GITEE_TOKEN，跳过 Gitee 同步。'; continue }
+            try {
+              $grel = Invoke-RestMethod -Method Get -Uri "$giteeBase/releases/tags/$tag" -Headers $ua
+            } catch {
+              if ((Get-Status $_) -eq 404) { Write-Warning "Gitee 没有 $tag 发行版（tag 未同步？），跳过。"; continue }
+              throw
+            }
+            $gtBody = ([IO.File]::ReadAllText($gtFile, [Text.Encoding]::UTF8)).Trim()
+            $gtJson = @{ access_token = $env:GITEE_TOKEN; name = $tag; body = $gtBody } | ConvertTo-Json -Depth 3
+            Invoke-RestMethod -Method Patch -Uri "$giteeBase/releases/$($grel.id)?access_token=$($env:GITEE_TOKEN)" `
+              -Headers $ua -ContentType 'application/json; charset=utf-8' `
+              -Body ([Text.Encoding]::UTF8.GetBytes($gtJson)) | Out-Null
+            Write-Host "Gitee  $tag：正文已更新（$($gtBody.Length) 字符）"
+            $updated++
+          }
+          Write-Host "完成：GitHub 侧已处理 $($tags.Count) 个版本，Gitee 侧更新 $updated 个。"
