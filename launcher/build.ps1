@@ -21,6 +21,12 @@ if ($CargoHome -ne '') {
     Write-Host "CARGO_HOME = $CargoHome"
 }
 
+# 原生命令（cargo）把编译进度写到 stderr：PowerShell 5.1 在
+# $ErrorActionPreference='Stop' 下会把它当作终止性的 NativeCommandError，
+# 表现为「cargo 实际构建成功、脚本却报失败」。这里临时放宽 EAP，
+# 成败一律以 $LASTEXITCODE 判定。
+$previousEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 Push-Location $srcTauri
 try {
     if ($Offline) {
@@ -30,10 +36,11 @@ try {
         Write-Host 'cargo build --release'
         cargo build --release
     }
-    if ($LASTEXITCODE -ne 0) { throw "cargo build failed (exit $LASTEXITCODE)" }
 } finally {
+    $ErrorActionPreference = $previousEap
     Pop-Location
 }
+if ($LASTEXITCODE -ne 0) { throw "cargo build failed (exit $LASTEXITCODE)" }
 
 $exe = Join-Path $srcTauri 'target\release\dsh-launcher.exe'
 if (-not (Test-Path -LiteralPath $exe)) {
