@@ -166,10 +166,10 @@ jobs:
               if ($confirm -contains 'dsh-launcher.exe') {
                 Write-Host "二次确认：附件已上传成功。"
               } else {
-                # 把真实报错写进 Gitee 发行版描述，便于经公开 API 远程诊断
-                # （Actions 日志匿名不可读；成功路径的下次运行会覆盖回正常文案）。
+                # 把真实报错追加到 Gitee 发行版描述开头，便于经公开 API 远程诊断
+                # （Actions 日志匿名不可读）；正文本身保留，重跑本工作流会覆盖回干净文案。
                 try {
-                  $errJson = @{ access_token = $env:GITEE_TOKEN; body = "CI 附件上传失败: $lastErr" } | ConvertTo-Json
+                  $errJson = @{ access_token = $env:GITEE_TOKEN; body = "**CI 附件上传失败**：$lastErr`n`n$bodyText" } | ConvertTo-Json
                   Invoke-Gitee -Method Patch -Uri "$base/releases/$($rel.id)?access_token=$($env:GITEE_TOKEN)" -JsonBody $errJson | Out-Null
                 } catch {}
                 throw "附件上传失败: $lastErr"
