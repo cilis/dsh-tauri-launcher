@@ -107,7 +107,13 @@ fn set_autostart(enabled: bool) -> bool {
                 .creation_flags(0x0800_0000)
                 .status()
         };
-        let _ = res;
+        // 结果不参与返回值判定（以注册表终态为准），但失败必须留痕：
+        // 「开关拨了没生效」这类问题原先完全没有日志（优化报告 v2 C6）。
+        match res {
+            Ok(status) if status.success() => {}
+            Ok(status) => eprintln!("[launcher] 设置开机自启失败（reg 退出码 {:?}）", status.code()),
+            Err(e) => eprintln!("[launcher] 无法执行 reg 命令：{e}"),
+        }
     }
     autostart_enabled() == enabled
 }
@@ -221,7 +227,12 @@ fn set_desktop_shortcut(enabled: bool) -> bool {
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .creation_flags(0x0800_0000)
             .status();
-        let _ = res;
+        // 同上：以 .lnk 终态为准，但 PowerShell 失败要留痕（v2 C6）。
+        match res {
+            Ok(status) if status.success() => {}
+            Ok(status) => eprintln!("[launcher] 创建桌面快捷方式失败（PowerShell 退出码 {:?}）", status.code()),
+            Err(e) => eprintln!("[launcher] 无法执行 PowerShell：{e}"),
+        }
     }
     desktop_shortcut_exists() == enabled
 }

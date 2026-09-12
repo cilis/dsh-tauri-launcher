@@ -72,8 +72,15 @@ fn set_taskbar_icon_big(window: &tauri::WebviewWindow, img: &tauri::image::Image
                     // Win11 25H2 实测：运行时仅 WM_SETICON ICON_BIG 不触发任务栏刷新
                     // （启动时设置有效、切换时不更新）。窗口类图标槽（GCLP_HICON/
                     // GCLP_HICONSM）是任务栏读图标的另一路径，一并更新（Chromium 同款做法）。
+                    // 失败留痕（v2 C6）：返回值 0 既可能是「此前无类图标」也可能是失败，
+                    // 故先清 last-error，再据 GetLastError 判定。
+                    windows::Win32::Foundation::SetLastError(windows::Win32::Foundation::WIN32_ERROR(0));
                     SetClassLongPtrW(hwnd, GCLP_HICON, hicon.0 as isize);
                     SetClassLongPtrW(hwnd, GCLP_HICONSM, hicon.0 as isize);
+                    let last_error = windows::Win32::Foundation::GetLastError();
+                    if last_error.0 != 0 {
+                        eprintln!("[launcher] 更新窗口类图标槽失败（GetLastError={}）", last_error.0);
+                    }
                 }
             }
         }

@@ -52,19 +52,30 @@ impl OwnedChild {
     /// 强制终止整棵进程树（Windows `taskkill /T /F`，其他平台 `kill -9`）。
     /// 同步实现：退出路径可能位于非异步上下文（托盘事件、`RunEvent::Exit`），
     /// taskkill 通常几十毫秒，代价可接受；句柄另做 `start_kill` 兜底。
+    /// 失败留痕：原实现静默丢弃 taskkill 结果，无法区分「进程树没杀干净」与
+    /// 「本就没有可杀进程」（优化报告 v2 C6）。
     pub(crate) fn terminate(mut self) {
         if let Some(pid) = self.pid {
             #[cfg(windows)]
             {
                 use std::os::windows::process::CommandExt;
-                let _ = StdCommand::new("taskkill")
+                let res = StdCommand::new("taskkill")
                     .args(["/PID", &pid.to_string(), "/T", "/F"])
                     .creation_flags(0x0800_0000)
                     .status();
+                match res {
+                    Ok(status) if status.success() => {}
+                    Ok(status) => eprintln!("[launcher] taskkill 退出码 {:?}", status.code()),
+                    Err(e) => eprintln!("[launcher] 无法执行 taskkill：{e}"),
+                }
             }
             #[cfg(not(windows))]
             {
-                let _ = StdCommand::new("kill").args(["-9", &pid.to_string()]).status();
+                match StdCommand::new("kill").args(["-9", &pid.to_string()]).status() {
+                    Ok(status) if status.success() => {}
+                    Ok(status) => eprintln!("[launcher] kill 退出码 {:?}", status.code()),
+                    Err(e) => eprintln!("[launcher] 无法执行 kill：{e}"),
+                }
             }
         }
         // 兜底：taskkill 后进程通常已退出，kill_on_drop 的二次 kill 无害。
