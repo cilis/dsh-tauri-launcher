@@ -16,6 +16,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 发版说明的唯一来源是 CHANGELOG.md（写法见 docs/release.md）。放在构建之前，
+      # 缺小节时几秒内就红，而不是发一个没有说明的发行版；修好后重跑本工作流即可。
+      - name: 生成发版说明（GitHub 正文）
+        shell: pwsh
+        run: |
+          & ./.github/scripts/release-notes.ps1 -Tag $env:GITHUB_REF_NAME -Mode github -OutFile "$env:RUNNER_TEMP/release-notes.github.md"
+          if ($LASTEXITCODE -ne 0) { throw "生成 $env:GITHUB_REF_NAME 的 GitHub 发版说明失败。" }
+
+      - name: 生成发版说明（Gitee 正文，仅中文）
+        shell: pwsh
+        run: |
+          & ./.github/scripts/release-notes.ps1 -Tag $env:GITHUB_REF_NAME -Mode gitee -OutFile "$env:RUNNER_TEMP/release-notes.gitee.md"
+          if ($LASTEXITCODE -ne 0) { throw "生成 $env:GITHUB_REF_NAME 的 Gitee 发版说明失败。" }
+
       - name: Rust 工具链
         uses: dtolnay/rust-toolchain@stable
 
@@ -36,7 +50,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: launcher/src-tauri/target/release/dsh-launcher.exe
-          generate_release_notes: true
+          # 正文由 CHANGELOG.md 生成（覆盖式写入）。不要改回
+          # generate_release_notes: true —— 它只按 PR 标题罗列且重跑会追加重复块。
+          body_path: ${{ runner.temp }}/release-notes.github.md
 
       # Gitee 镜像同步只携带 git 内容，发行版（Release）需经 API 单独创建。
       # 未配置 GITEE_TOKEN 时告警跳过；Gitee API 偶发抖动，所有调用带重试，
@@ -87,7 +103,8 @@ jobs:
           } catch {
             if ($_.Exception.Response.StatusCode.value__ -ne 404) { throw }
           }
-          $bodyText = "DeepSeek Harness 桌面启动器 $env:TAG（自动同步自 GitHub Release）"
+          # 发行版正文与 GitHub 同源（CHANGELOG.md 生成），Gitee 侧只保留中文段。
+          $bodyText = (Get-Content -LiteralPath "$env:RUNNER_TEMP\release-notes.gitee.md" -Raw -Encoding UTF8).Trim()
           if ($rel) {
             try {
               $patchJson = @{ access_token = $env:GITEE_TOKEN; name = $env:TAG; body = $bodyText } | ConvertTo-Json
