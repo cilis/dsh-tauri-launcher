@@ -144,6 +144,77 @@
 | 跳转锁超时 | 1.5 秒 | `lib/client.js` | 会话栈 pendingJump 兜底 |
 | 快捷方式存在性缓存 | 5 秒 | `lib/index.js` | 减少 PowerShell 调用 |
 
+## 标题栏与窗口外壳
+
+主窗口无边框（`decorations: false`）：DSH 就绪前显示启动卡片（检查/安装/启动/错误
+各 phase），就绪后隐藏卡片、显示 40px 自绘标题栏并用 iframe 承载 DSH（不再整页跳转）。
+
+- **三键**：最小化 / 最大化还原 / 关闭；关闭被 Rust 侧 `CloseRequested` 拦截为「隐藏到托盘」，
+  真正退出走托盘菜单或标题栏菜单的「退出」；
+- **◀/▶**：会话导航（见下节），另支持 Alt+←/→ 与鼠标侧键；可用性由插件回传后置灰；
+- **文件菜单**：设置 / 重新加载页面 / 在浏览器中打开 / 退出；**帮助菜单**：官网 / 文档。
+  外链 URL 表唯一维护在 Rust 侧（`EXTERNAL_LINKS`），前端只传 key（`dsl` 为本地 DSH，
+  地址取自应用状态以带上 token）；
+- **窗口拖动**：`data-tauri-drag-region`；capability 必须显式包含
+  `core:window:allow-start-dragging`（`core:window:default` 不含，缺失时拖动被静默拒绝）。
+
+## 标题栏主题跟随链路
+
+目标：标题栏与 DSH 配色一致，并在 DSH 偏好为「跟随系统」时随 Windows 主题切换。
+
+1. 插件读 DSH **真实生效**的 token（`getComputedStyle(document.body)` 的 `--dsw-*`；
+   内置主题快照的 tokens 是空表，只能读计算样式，必要时手动解一层 `var()` 链），
+   连同 `scheme` 经 postMessage 发给外壳；
+2. 外壳 `applyTitlebarTheme()` 逐项写入 `--tb-*` 变量，颜色经 `pickColor()` 形状校验，
+   非法值回退内置色板；
+3. **读取必须延后到当前任务之后**（`setTimeout 0`）：DSH 的 ThemePresenter 写
+   `body[data-ds-dark-theme]` 与本插件的 `theme/change` 监听器同处一次**同步**派发，
+   谁先注册不保证，同步读会拿到上一个主题的 token（表现为标题栏滞后一个主题）；
+   另有 `body` 主题属性的 MutationObserver 兜底与同状态签名去重；
+4. 插件缺席（未安装 / 浏览器直开）时，外壳回退 `matchMedia('(prefers-color-scheme: dark)')`；
+   插件一旦上报过主题（`pluginThemeApplied`）即不再介入。
+
+## Windows 系统主题跟随
+
+WebView2 的 `prefers-color-scheme` 只有宿主显式设置 `PreferredColorScheme` 才会随
+Windows 变化，而 tauri/wry 未暴露该能力（wry#806）→ DSH 的 `system` 偏好会冻结在
+启动值，`matchMedia` 的 change 监听永不触发。补偿链路：
+
+- Rust 每 2 秒查注册表 `AppsUseLightTheme`，变化时刷新托盘/窗口图标并向主窗口
+  `emit("launcher-system-theme")`；
+- 外壳转发给 iframe 内插件；插件在偏好为 `system` 且未处于该方案时，用
+  `Object.defineProperty` 覆盖 ThemeRuntime `media.matches` 为真实系统值并 `publish()`。
+
+**偏好零改写**：不调用 `setTheme()`，用户设置面板不会被改动；用户固定了具体主题时让位。
+
+## 会话导航栈（应用层）
+
+DSH 是 React SPA，切会话不产生浏览器历史（`history.back()` 会退回 iframe 加载前的空白页），
+故用应用层双栈实现前进/后退：
+
+- **状态源**：插件 `ctx.get('sessions').list`（SnapshotStore：`getSnapshot()` 给出
+  `current` 与 `currentAddress`，`subscribe(fn)` 返回退订函数）；跳转用
+  `open(id)` / `openSubagent(address)`；
+- **语义**：非跳转来源的 current 变化 → 上一个会话压 backStack 并清空 forwardStack；
+  ◀ 弹 backStack（当前会话压 forwardStack），▶ 反向；栈上限 50、连续重复跳过；
+- **锁**：跳转前记录 pendingJump，避免自身触发的变化被当成用户切换重复压栈；
+  1.5 秒超时兜底解锁并重新同步快照；
+- **状态回传**：插件在初始化与每次变化后上报 `navStatus`，外壳据此置灰按钮；
+  外壳每 3 秒 ping 一次实现自愈（单次消息丢失可恢复）。
+
+## 设置 / 退出进度窗口与预建约束
+
+主窗口 iframe 加载跨源 DSH 之后，主线程**同步 build 第二个 webview 会死锁**
+（WebView2 多窗口竞态：实测 `build()` 永不返回、事件循环停摆）。因此：
+
+- `settings` 与 `exiting` 两个辅助窗口在启动早期**预建**（`visible(false)` 防闪现），
+  之后只 `show()` 复用；**退出路径绝不做现建兜底**（预建失败宁可没有动画）；
+- `exiting` 为紧凑 dialog（`skip_taskbar` + `always_on_top`），由 `exiting.js` 按内容
+  高度 `setSize`（需要 capability `core:window:allow-set-size`）；其样式自带于
+  `exiting.css`，不依赖外壳样式表；
+- 退出动画期间先 `destroy()` 主窗口与设置窗口（`close()` 会被「隐藏到托盘」拦截），
+  再显示进度窗口；清理（taskkill 等）放到后台任务，避免阻塞 UI 导致动画白屏。
+
 ## 状态模型（浏览器侧）
 
 `desktop: true | false | null`（运行中/已停止/状态未知）+ `shortcut: bool`。
