@@ -19,6 +19,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 发版说明的唯一来源是 CHANGELOG.md，release 工作流打 tag 时缺小节会直接失败。
+      # 这里把「改了版本号却没写说明」提前拦在 PR 阶段，并在同一处校验中英双语格式。
+      - name: 校验 CHANGELOG.md 覆盖当前版本号
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw -Encoding UTF8).Trim() | ConvertFrom-Json | Select-Object -ExpandProperty version
+          & ./.github/scripts/release-notes.ps1 -Tag "v$version" -DryRun | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "package.json 版本为 $version，但 CHANGELOG.md 没有对应的合格小节。请先用 docs: 提交补一节发版说明（格式见 docs/release.md，需含 <!-- en --> 英文段），再做版本同步提交。"
+          }
+          Write-Host "CHANGELOG.md 已包含 v$version 的合格小节。"
+
       - name: Rust 工具链
         uses: dtolnay/rust-toolchain@stable
 
