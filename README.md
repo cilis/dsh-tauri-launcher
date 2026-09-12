@@ -73,6 +73,7 @@ Web 插件（宿主半）通过 `/api/dsh-tauri-launcher/*` 回环路由与浏�
 dsh-tauri-launcher/
 ├── README.md             # 中文 README
 ├── README.en.md          # 英文 README
+├── CHANGELOG.md          # 更新日志——发版说明的唯一来源（中英双语）
 ├── package.json          # dsh.bundle + dsh.client 双 manifest
 ├── cordis.patch.yml      # 组合补丁（插入插件行）
 ├── lib/
@@ -151,6 +152,7 @@ dsh plugin --profile web remove @lenorin/dsh-tauri-launcher
 
 - [docs/architecture.md](docs/architecture.md) — 架构与标记文件协议
 - [docs/release.md](docs/release.md) — 安装、构建、发布、卸载与配置参考
+- [CHANGELOG.md](CHANGELOG.md) — 更新日志（逐版本发版说明，GitHub/Gitee 发行版正文的来源）
 
 ## License
 
