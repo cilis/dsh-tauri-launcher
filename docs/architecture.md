@@ -91,8 +91,17 @@
   iframe 完成 token→cookie 交换；旧版 DSH 仍走裸 `GET /` 的 `__DSH_BOOT__` 指纹路径。
   接管外部实例但 WebView2 无 cookie 时，外壳提示条提供「关闭并重启」
   （`restart_dsh_external`：netstat 定位占用进程 → taskkill → 自启动完成握手）。
-- settings/exiting 两个辅助窗口仍走 tauri 资产协议（不涉及 DSH cookie）；插件侧无需
-  改动（父 origin 由 `document.referrer` 推导，与外壳 origin 无关）。
+- settings/exiting 两个辅助窗口仍走 tauri 资产协议（不涉及 DSH cookie）。
+- **外壳 origin 与插件侧校验（2026-09-12 修正）**：外壳改由 `127.0.0.1:3081` 承载
+  后，插件**不能只依赖** `document.referrer` 推导父 origin——实测（DSH 0.1.5 +
+  WebView2）iframe 经 token 303 握手后 `document.referrer` 为**空串**，推导值退化
+  为兜底常量 `http://tauri.localhost`，与外壳实际 origin 不符，导致「外壳 → 插件」
+  的消息（导航命令、系统主题）被 `event.origin` 校验全部丢弃（症状：◀/▶ 点击无
+  响应、Windows 主题不跟随；探针实测 34 次 ping 全部 match=false）。
+  现行为：`isShellMessage()` 以 `event.source === window.parent` 作身份校验，origin
+  按「referrer 推导值 **或** 已知外壳白名单（`http://127.0.0.1:3081`、
+  `http://tauri.localhost`）」收口。**改动外壳端口时须同步更新插件侧
+  `SHELL_ORIGINS`**（两侧常量需保持一致）。
 
 ## 外壳 ↔ 插件消息协议（postMessage）
 
