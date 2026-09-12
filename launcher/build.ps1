@@ -1,4 +1,4 @@
-# dsh-tauri-launcher 桌面应用一键构建脚本（Windows）。
+﻿# dsh-tauri-launcher 桌面应用一键构建脚本（Windows）。
 # 用法：在仓库根目录运行  pwsh -File launcher/build.ps1
 # 产物：launcher/src-tauri/target/release/dsh-launcher.exe
 #
@@ -9,12 +9,41 @@
 
 param(
     [switch]$Offline,
-    [string]$CargoHome = ''
+    [string]$CargoHome = '',
+    # 构建前把版本号同步到三处（package.json / Cargo.toml / tauri.conf.json），
+    # 例如 -Bump 1.0.9；留空则不动版本号。
+    [string]$Bump = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $srcTauri = Join-Path $PSScriptRoot 'src-tauri'
+
+# 版本号三处同步：用 .NET API 显式 UTF-8（无 BOM）读写，避免 Get-Content /
+# Set-Content 在非 UTF-8 默认代码页下损坏含中文的文件（package.json 的
+# description 就是中文）。
+if ($Bump -ne '') {
+    if ($Bump -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$') {
+        throw "invalid version: $Bump (expected e.g. 1.0.9)"
+    }
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    $targets = @(
+        @{ File = (Join-Path $root 'package.json');        Pattern = '("version"\s*:\s*")[^"]+(")' },
+        @{ File = (Join-Path $srcTauri 'Cargo.toml');      Pattern = '(?m)^(version\s*=\s*")[^"]+(")' },
+        @{ File = (Join-Path $srcTauri 'tauri.conf.json'); Pattern = '("version"\s*:\s*")[^"]+(")' }
+    )
+    foreach ($target in $targets) {
+        $text = [System.IO.File]::ReadAllText($target.File, $utf8)
+        # 只替换**第一处**匹配：Cargo.toml 中另有依赖项的 version 行
+        # （如 [target."cfg(windows)".dependencies.windows] 的 0.61），
+        # 全量替换会把它一并改坏（实测离线解析报 windows = "^1.0.9" 失败）。
+        $updated = ([regex]$target.Pattern).Replace($text, ('${1}' + $Bump + '${2}'), 1)
+        if ($updated -eq $text) { throw "version field not found: $($target.File)" }
+        [System.IO.File]::WriteAllText($target.File, $updated, $utf8)
+        Write-Host "version -> $Bump : $($target.File)"
+    }
+    Write-Host 'NOTE: rebuild + sync launcher/bin/dsh-launcher.exe before publishing.'
+}
 
 if ($CargoHome -ne '') {
     $env:CARGO_HOME = $CargoHome
