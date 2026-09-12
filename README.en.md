@@ -77,6 +77,7 @@ loopback routes, and controls the desktop app via a sentinel-file protocol (see
 dsh-tauri-launcher/
 ├── README.md             # Chinese README
 ├── README.en.md          # English README
+├── CHANGELOG.md          # changelog — the single source of release notes (bilingual)
 ├── package.json          # dsh.bundle + dsh.client dual manifest
 ├── cordis.patch.yml      # composition patch (inserts the plugin row)
 ├── lib/
@@ -159,6 +160,7 @@ fit common deployments):
 
 - [docs/architecture.md](docs/architecture.md) — architecture & sentinel-file protocol (Chinese)
 - [docs/release.md](docs/release.md) — install, build, release, uninstall & configuration reference (Chinese)
+- [CHANGELOG.md](CHANGELOG.md) — release notes per version (Chinese + English)
 
 ## License
 

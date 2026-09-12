@@ -48,13 +48,17 @@
 
 ## 版本同步与发版策略
 
-- **发版前置**：特性经 PR 合入 `main` 后，若要发版，先在 `main` 上补一个
+- **发版说明先行**：在 `main` 上用**单独的 `docs:` 提交**给 `CHANGELOG.md` 补一节
+  `## vX.Y.Z`（发版说明的唯一来源，写法见 [release.md](release.md)）；`ci.yml` 会校验
+  `package.json` 的版本是否有合格小节，缺了直接红。
+- **发版前置**：特性经 PR 合入 `main` 后，若要发版，再补一个
   **版本同步提交**（三处版本号统一：`package.json` / `Cargo.toml` /
   `tauri.conf.json`，并重建同步 `launcher/bin/dsh-launcher.exe`——可直接
-  用 CI main 分支构建的产物），该提交同样走 PR。
+  用 CI main 分支构建的产物），该提交同样走 PR；版本号可用
+  `pwsh -File launcher/build.ps1 -Bump X.Y.Z` 一次改齐。
 - **打 tag**：`git tag vX.Y.Z && git push origin vX.Y.Z`，触发
-  [`release.yml`](../.github/workflows/release.yml)：cargo test → 构建 →
-  GitHub Release → 自动同步 Gitee 发行版（GITEE_TOKEN）。
+  [`release.yml`](../.github/workflows/release.yml)：生成发版说明 → cargo test →
+  构建 → GitHub Release（正文取自 `CHANGELOG.md`）→ 自动同步 Gitee 发行版（GITEE_TOKEN）。
 - **Gitee 镜像**：分支/tag 在 Gitee 手动「强制同步」后出现；发行版由
   release.yml 自动创建，无需手动传附件。
 
@@ -76,3 +80,9 @@ cargo test 作为最后防线。
 - **分支落后 main**：`git fetch && git rebase origin/main` 后重推
   （保护要求 up to date）。
 - **紧急修复**：`fix/<主题>` 同样走 PR，流程不变（保护不豁免管理员）。
+- **打 tag 后 release 报「CHANGELOG.md 中没有 vX.Y.Z 小节」**：预期行为（在构建前
+  就失败，避免发出没有说明的发行版）。补一节后把 tag 重指到修好的提交
+  （`git push --force origin vX.Y.Z`）再重跑，或先发出去再用
+  `release-notes` 工作流补正文。
+- **发行版正文要改**：改 `CHANGELOG.md` 推到 `main` 会自动同步（幂等），
+  也可在 Actions → release-notes 手动触发单个 tag。
