@@ -249,11 +249,13 @@ pub struct SettingsSnapshot {
 
 #[tauri::command]
 pub(crate) fn get_settings() -> SettingsSnapshot {
+    // 配置只读一次：原先两个字段各自 load_config()，重复读盘并解析 JSON（v2 C7）。
+    let config = load_config();
     SettingsSnapshot {
         autostart: autostart_enabled(),
-        global_shortcut: load_config().global_shortcut,
+        global_shortcut: config.global_shortcut,
         desktop_shortcut: desktop_shortcut_exists(),
-        terminate_harness_on_exit: load_config().terminate_harness_on_exit,
+        terminate_harness_on_exit: config.terminate_harness_on_exit,
         hotkey: HOTKEY.to_string(),
     }
 }
