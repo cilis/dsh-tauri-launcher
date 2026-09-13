@@ -187,6 +187,29 @@ Windows 变化，而 tauri/wry 未暴露该能力（wry#806）→ DSH 的 `syste
 
 **偏好零改写**：不调用 `setTheme()`，用户设置面板不会被改动；用户固定了具体主题时让位。
 
+### 任务栏按钮图标的来源（2026-09-13 实测，重要）
+
+**Win11 任务栏按钮画的是「应用标识」的图标，不是窗口图标。** 实测（25H2 / 26200.9445）：
+切换系统主题时，主窗口的四个图标槽（`WM_GETICON` BIG/SMALL、`GCLP_HICON/HICONSM`）
+全部换成了新句柄，托盘图标也跟着变，但任务栏按钮纹丝不动——连
+`ITaskbarList::DeleteTab + AddTab` 强制重建按钮也不变。
+
+取按钮像素比对后确认：按钮主体是 `(250,250,250)`，正好等于 exe 内嵌的
+`icons/icon.png`，而窗口图标当时是 `(15,17,21)`（浅色主题用黑鲸）→ **任务栏画的是
+exe 内嵌图标**。所以：
+
+- `set_icon`（ICON_SMALL）、`WM_SETICON ICON_BIG`、`GCLP_HICON/HICONSM` 这几条路径
+  实际影响的是**标题栏与 Alt-Tab**，改不动任务栏按钮（v1.0.6/v1.0.7 两次修复因此都
+  没治本；深色任务栏上白色鲸鱼看着正常，一切到浅色就“失效”）；
+- 托盘图标走的是另一条 shell 通道，**是**跟随主题的；
+- 任务栏按钮要显示什么，只能由 **exe 内嵌图标**（`icons/icon.ico`）决定，运行时不改；
+  因此应用图标本身必须是**浅色/深色任务栏都看得清**的配色（现为品牌蓝 `#4D6BFE`），
+  `icon-black.png`/`icon-white.png` 只服务于托盘与窗口图标；
+- `main.rs` 之外，`run()` 在**建窗口之前**调用
+  `SetCurrentProcessExplicitAppUserModelID("com.dsh.launcher")`（与
+  `tauri.conf.json` 的 `identifier` 一致，有单元测试钉住）：不显式设置时 Windows 按
+  exe 推导身份，任务栏更容易只认 exe 图标；这也是社区修任务栏图标问题的标准前置步骤。
+
 ## 会话导航栈（应用层）
 
 DSH 是 React SPA，切会话不产生浏览器历史（`history.back()` 会退回 iframe 加载前的空白页），
