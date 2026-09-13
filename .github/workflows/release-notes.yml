@@ -66,6 +66,16 @@ jobs:
           # 调用生成脚本，并把失败明细做成 ::error:: 注解：Actions 日志匿名不可读，
           # 而注解能经公开 API 读到（本仓库远程排障就靠这个）。
           # 注意 *>&1 —— Write-Host 走信息流，只写 2>&1 抓不到脚本自己打印的原因。
+          function Invoke-WithRetry([scriptblock]$Action, [string]$What, [int]$Attempts = 3) {
+            for ($i = 1; $i -le $Attempts; $i++) {
+              try { & $Action; return } catch {
+                if ($i -eq $Attempts) { throw }
+                Write-Warning "$What 第 $i 次失败：$($_.Exception.Message)（$($i * 3) 秒后重试）"
+                Start-Sleep -Seconds ($i * 3)
+              }
+            }
+          }
+
           function Invoke-Notes([string]$Tag, [string]$Mode, [string]$OutFile) {
             $prev = $ErrorActionPreference
             $ErrorActionPreference = 'Continue'
@@ -100,6 +110,7 @@ jobs:
           Write-Host "待同步：$($tags -join ', ')"
 
           $updated = 0
+          $failed = @()
           foreach ($tag in $tags) {
             $tag = "$tag".Trim()
             if (-not $tag) { continue }
@@ -121,27 +132,47 @@ jobs:
             # 3) 覆盖 GitHub 发行版正文（同内容重复执行结果一致，天然幂等）
             $ghBody = [IO.File]::ReadAllText($ghFile, [Text.Encoding]::UTF8)
             $payload = [Text.Encoding]::UTF8.GetBytes((@{ body = $ghBody } | ConvertTo-Json -Depth 3))
-            Invoke-RestMethod -Method Patch -Uri "$ghApi/releases/$($rel.id)" -Headers $ghHeaders `
-              -ContentType 'application/json; charset=utf-8' -Body $payload | Out-Null
+            $ghUri = "$ghApi/releases/$($rel.id)"
+            Write-Host "→ GitHub PATCH $ghUri（$tag，$($ghBody.Length) 字符）"
+            try {
+              Invoke-WithRetry { Invoke-RestMethod -Method Patch -Uri $ghUri -Headers $ghHeaders `
+                  -ContentType 'application/json; charset=utf-8' -Body $payload | Out-Null } "GitHub $tag PATCH"
+            } catch {
+              # 单个版本失败不再中断整轮回填：记下来继续跑，最后统一报（否则一个坏版本
+              # 会把后面所有版本一起挡住，v1.0.1 卡住时就是这样）
+              $failed += "$tag/GitHub：$($_.Exception.Message)"
+              Write-Host "::error::[$tag] GitHub 正文更新失败（$ghUri）：$($_.Exception.Message)"
+              continue
+            }
             Write-Host "GitHub $tag：正文已更新（$($ghBody.Length) 字符）"
 
-            # 4) Gitee 侧同上（tag 未同步或未配置 token 时告警跳过，不算失败）
+            # 4) Gitee 侧同上（tag 未同步、未配置 token 或接口抖动时告警跳过，不算失败）
             if (-not $env:GITEE_TOKEN) { Write-Warning '未配置 GITEE_TOKEN，跳过 Gitee 同步。'; continue }
             try {
               $grel = Invoke-RestMethod -Method Get -Uri "$giteeBase/releases/tags/$tag" -Headers $ua
             } catch {
-              if ((Get-Status $_) -eq 404) { Write-Warning "Gitee 没有 $tag 发行版（tag 未同步？），跳过。"; continue }
-              throw
+              # Gitee 偶发会回 405/403 等限流类状态码，对「查询是否存在」这一步一律按跳过处理
+              Write-Warning "Gitee 查不到 $tag 发行版或接口异常（$($_.Exception.Message)），跳过。"
+              continue
             }
             $gtBody = ([IO.File]::ReadAllText($gtFile, [Text.Encoding]::UTF8)).Trim()
             # Gitee 的「更新 Release」接口把 tag_name 当必填项：只传 name/body 会回
             # {"messages":["tag_name is missing"]}（2026-09-13 实测，首次回填就栽在这）。
             # 值与 GET 到的发行版一致，等于不改指向、只换正文。
             $gtJson = @{ access_token = $env:GITEE_TOKEN; tag_name = $tag; name = $tag; body = $gtBody } | ConvertTo-Json -Depth 3
-            Invoke-RestMethod -Method Patch -Uri "$giteeBase/releases/$($grel.id)?access_token=$($env:GITEE_TOKEN)" `
-              -Headers $ua -ContentType 'application/json; charset=utf-8' `
-              -Body ([Text.Encoding]::UTF8.GetBytes($gtJson)) | Out-Null
+            $gtUri = "$giteeBase/releases/$($grel.id)"
+            Write-Host "→ Gitee PATCH $gtUri（$tag，$($gtBody.Length) 字符）"
+            try {
+              Invoke-WithRetry { Invoke-RestMethod -Method Patch -Uri "$gtUri?access_token=$($env:GITEE_TOKEN)" `
+                  -Headers $ua -ContentType 'application/json; charset=utf-8' `
+                  -Body ([Text.Encoding]::UTF8.GetBytes($gtJson)) | Out-Null } "Gitee $tag PATCH"
+            } catch {
+              $failed += "$tag/Gitee：$($_.Exception.Message)"
+              Write-Host "::error::[$tag] Gitee 正文更新失败（$gtUri）：$($_.Exception.Message)"
+              continue
+            }
             Write-Host "Gitee  $tag：正文已更新（$($gtBody.Length) 字符）"
             $updated++
           }
           Write-Host "完成：GitHub 侧已处理 $($tags.Count) 个版本，Gitee 侧更新 $updated 个。"
+          if ($failed.Count) { throw ("以下版本同步失败：" + ($failed -join '；')) }
