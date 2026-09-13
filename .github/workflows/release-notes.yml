@@ -19,6 +19,8 @@ on:
       - CHANGELOG.md
       - .github/release-footer.md
       - .github/scripts/release-notes.ps1
+      # 改本工作流自身也重跑一次：幂等，且修完同步逻辑能立刻在 main 上看到结果
+      - .github/workflows/release-notes.yml
   workflow_dispatch:
     inputs:
       tag:
@@ -132,7 +134,10 @@ jobs:
               throw
             }
             $gtBody = ([IO.File]::ReadAllText($gtFile, [Text.Encoding]::UTF8)).Trim()
-            $gtJson = @{ access_token = $env:GITEE_TOKEN; name = $tag; body = $gtBody } | ConvertTo-Json -Depth 3
+            # Gitee 的「更新 Release」接口把 tag_name 当必填项：只传 name/body 会回
+            # {"messages":["tag_name is missing"]}（2026-09-13 实测，首次回填就栽在这）。
+            # 值与 GET 到的发行版一致，等于不改指向、只换正文。
+            $gtJson = @{ access_token = $env:GITEE_TOKEN; tag_name = $tag; name = $tag; body = $gtBody } | ConvertTo-Json -Depth 3
             Invoke-RestMethod -Method Patch -Uri "$giteeBase/releases/$($grel.id)?access_token=$($env:GITEE_TOKEN)" `
               -Headers $ua -ContentType 'application/json; charset=utf-8' `
               -Body ([Text.Encoding]::UTF8.GetBytes($gtJson)) | Out-Null
