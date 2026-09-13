@@ -75,10 +75,13 @@ if ($sectionEnd -gt $current.Index) {
     $rawSection = ($lines[($current.Index + 1)..$sectionEnd] -join "`n")
 }
 
-$parts = $rawSection -split '(?s)<!--\s*en\s*-->'
-$cn = $parts[0].Trim()
-$en = ''
-if ($parts.Count -gt 1) { $en = ($parts[1..($parts.Count - 1)] -join '<!-- en -->').Trim() }
+$rawSection = [string]$rawSection
+
+# 用 [regex]::Match 而不是 -split 取「第一个 <!-- en --> 之前/之后」：少一层数组下标，
+# 任何一侧缺失都退化成空串交给下面的校验报错，不会抛出难以定位的异常。
+$enMarker = [regex]::Match($rawSection, '(?s)<!--\s*en\s*-->')
+$cn = if ($enMarker.Success) { $rawSection.Substring(0, $enMarker.Index).Trim() } else { $rawSection.Trim() }
+$en = if ($enMarker.Success) { $rawSection.Substring($enMarker.Index + $enMarker.Length).Trim() } else { '' }
 
 if ($cn.Length -lt 80) { Fail "$tagName 小节的中文正文只有 $($cn.Length) 字符，疑似未写完。" }
 if ($Mode -eq 'github' -and $en.Length -lt 40) {
@@ -89,14 +92,17 @@ if (-not (Test-Path -LiteralPath $Footer)) { Fail "找不到说明尾部模板�
 $prevTag = if ($nextHeading) { 'v' + $nextHeading.Version } else { '' }
 $footerLines = @(Get-Content -LiteralPath $Footer -Encoding UTF8)
 if (-not $prevTag) { $footerLines = @($footerLines | Where-Object { $_ -notmatch '\{PREV\}' }) }
-$footerText = ($footerLines -join "`n").Replace('{VERSION}', $version).Replace('{TAG}', $tagName)
+$footerText = [string]($footerLines -join "`n")
+$footerText = $footerText.Replace('{VERSION}', $version).Replace('{TAG}', $tagName)
 if ($prevTag) { $footerText = $footerText.Replace('{PREV}', $prevTag) }
 if ($Mode -eq 'gitee') {
-    $footerText = ($footerText -split '(?s)<!--\s*en\s*-->')[0]
+    # Gitee 是中文镜像：只保留标记之前的中文段（同上面的 [regex] 取法）
+    $footerMarker = [regex]::Match($footerText, '(?s)<!--\s*en\s*-->')
+    if ($footerMarker.Success) { $footerText = $footerText.Substring(0, $footerMarker.Index) }
 } else {
     $footerText = $footerText -replace '(?m)^\s*<!--\s*en\s*-->\s*$', '---'
 }
-$footerText = $footerText.Trim()
+$footerText = ([string]$footerText).Trim()
 if (-not $footerText) { Fail "尾部模板处理为空：$Footer" }
 
 $text = if ($Mode -eq 'github') { "$cn`n`n---`n`n$en`n`n$footerText" } else { "$cn`n`n$footerText" }

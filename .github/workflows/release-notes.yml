@@ -44,6 +44,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          # 任何未预期异常都变成可读注解（日志匿名读不到，注解能）
+          trap { Write-Host "::error::release-notes 同步失败：$($_.Exception.Message)"; throw }
           $script = './.github/scripts/release-notes.ps1'
           $giteeBase = 'https://gitee.com/api/v5/repos/cilis/dsh-tauri-launcher'
           $ghApi = "https://api.github.com/repos/$env:REPO"
@@ -57,6 +59,31 @@ jobs:
 
           function Get-Status($ErrorRecord) {
             try { return [int]$ErrorRecord.Exception.Response.StatusCode } catch { return 0 }
+          }
+
+          # 调用生成脚本，并把失败明细做成 ::error:: 注解：Actions 日志匿名不可读，
+          # 而注解能经公开 API 读到（本仓库远程排障就靠这个）。
+          # 注意 *>&1 —— Write-Host 走信息流，只写 2>&1 抓不到脚本自己打印的原因。
+          function Invoke-Notes([string]$Tag, [string]$Mode, [string]$OutFile) {
+            $prev = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            $lines = @()
+            $code = 0
+            try {
+              $lines = @(& $script -Tag $Tag -Mode $Mode -OutFile $OutFile *>&1)
+              $code = $LASTEXITCODE
+            } catch {
+              $code = 1
+              $lines += "异常：$($_.Exception.Message)"
+            } finally {
+              $ErrorActionPreference = $prev
+            }
+            if ($code -ne 0) {
+              $detail = ($lines | ForEach-Object { "$_" }) -join ' | '
+              if (-not $detail) { $detail = '（脚本无输出）' }
+              Write-Host "::error::[$Tag/$Mode] release-notes.ps1 退出码 $code：$detail"
+              throw "生成 $Tag 的 $Mode 正文失败。"
+            }
           }
 
           # 待同步的版本：手动输入优先，否则取 CHANGELOG.md 里的全部小节
@@ -86,10 +113,8 @@ jobs:
             # 2) 生成两种形态的正文（GitHub 中英、Gitee 仅中文）
             $ghFile = Join-Path $env:RUNNER_TEMP "notes-$tag.github.md"
             $gtFile = Join-Path $env:RUNNER_TEMP "notes-$tag.gitee.md"
-            & $script -Tag $tag -Mode github -OutFile $ghFile
-            if ($LASTEXITCODE -ne 0) { throw "生成 $tag 的 GitHub 正文失败。" }
-            & $script -Tag $tag -Mode gitee -OutFile $gtFile
-            if ($LASTEXITCODE -ne 0) { throw "生成 $tag 的 Gitee 正文失败。" }
+            Invoke-Notes -Tag $tag -Mode github -OutFile $ghFile
+            Invoke-Notes -Tag $tag -Mode gitee -OutFile $gtFile
 
             # 3) 覆盖 GitHub 发行版正文（同内容重复执行结果一致，天然幂等）
             $ghBody = [IO.File]::ReadAllText($ghFile, [Text.Encoding]::UTF8)
