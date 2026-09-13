@@ -27,6 +27,31 @@ use tauri::Manager;
 
 use crate::harness::AppState;
 
+/// 显式 AppUserModelID（必须与 `tauri.conf.json` 的 `identifier` 一致，有测试兜底）。
+///
+/// 为什么需要它：Win11 任务栏按钮的**图标与分组归属「应用标识」**——不显式设置时
+/// Windows 按 exe 推导身份，按钮便只画 exe 内嵌图标（2026-09-13 实测：切换系统主题
+/// 后窗口图标槽 WM_SETICON/类图标全换了新句柄、托盘图标也跟着变，但按钮像素仍是
+/// exe 内嵌的 icon.png，连 DeleteTab+AddTab 重建按钮都不变）。显式 AUMID 让任务栏
+/// 按本应用身份取图标，是社区修「任务栏图标不跟随」的标准前置步骤。
+/// 必须在**创建任何窗口之前**调用，否则对已存在的窗口无效。
+pub(crate) const APP_USER_MODEL_ID: &str = "com.dsh.launcher";
+
+/// 设置显式 AppUserModelID（仅 Windows；失败只留痕，不影响启动）。
+#[cfg(windows)]
+fn set_app_user_model_id() {
+    // 注意 `::windows` 前缀：本文件声明了同名模块 `mod windows`，不加前导 :: 会解析到
+    // 自己的模块而不是 windows crate。
+    use ::windows::core::PCWSTR;
+    use ::windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
+
+    let wide: Vec<u16> = APP_USER_MODEL_ID.encode_utf16().chain(std::iter::once(0)).collect();
+    let hr = unsafe { SetCurrentProcessExplicitAppUserModelID(PCWSTR(wide.as_ptr())) };
+    if hr.is_err() {
+        eprintln!("[launcher] 设置 AppUserModelID 失败：{hr:?}");
+    }
+}
+
 /// 启动外壳静态服务。必须在 tauri 建窗口之前调用：主窗口 URL 指向
 /// `http://127.0.0.1:3081`（与 DSH 的 127.0.0.1:3080 同站，SameSite=Strict
 /// cookie 才可用），服务未就绪时主窗口会加载失败。
@@ -36,6 +61,10 @@ pub fn start_shell_server() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 任务栏图标/分组按应用标识归属：必须在 tauri 建窗口之前设置（见常量注释）。
+    #[cfg(windows)]
+    set_app_user_model_id();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppState::default())
@@ -98,4 +127,21 @@ pub fn run() {
                 shutdown::exit_launcher(app);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    /// AppUserModelID 必须与打包标识一致：两者不一致会让任务栏把同一应用当成两个
+    /// 身份（图标/固定项各挂一边），这类漂移肉眼很难发现，故用测试钉住。
+    #[test]
+    fn app_user_model_id_matches_bundle_identifier() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tauri.conf.json");
+        let text = std::fs::read_to_string(path).expect("读取 tauri.conf.json");
+        let json: serde_json::Value = serde_json::from_str(&text).expect("解析 tauri.conf.json");
+        assert_eq!(
+            json["identifier"].as_str(),
+            Some(super::APP_USER_MODEL_ID),
+            "tauri.conf.json 的 identifier 与 APP_USER_MODEL_ID 不一致"
+        );
+    }
 }
