@@ -8,6 +8,62 @@
 截断，因此只显示中文）。小节内按 **新增 / 修复 / 变更 / 内部改进** 分组，无内容的
 分组省略；条目写「现象或功能 → 原因/影响 → 解决方式」，面向使用者，不照抄提交标题。
 
+## v1.0.10 — 未发布
+
+修好设置里「桌面启动」与实际运行的桌面端不同步的问题：插件现在会自动找到正在运行的
+那一份桌面应用实例（不再只认 npm 包内的副本）。本版只改插件，桌面应用行为不变。
+
+**修复**
+
+- **设置里的「桌面启动」状态对不上、开关关不掉也开不起来**：心跳、退出标记与桌面应用
+  配置都以「桌面应用 exe 同目录」为界，而插件此前只把 npm 包内的 `launcher/bin` 当作
+  候选目录。若实际运行的是另一份副本（例如本地 `build.ps1` 的构建产物），插件就会读到
+  空心跳 → 状态显示「状态未知」；关闭开关写出的 `.dsh-quit` 落进错误目录，正在运行的
+  实例看不到（关不掉）；打开开关反而拉起第二份副本（与已运行实例抢全局快捷键与外壳
+  页面端口）。现在插件按优先级探测候选目录——行配置 `launcherExe` → **运行中的
+  `dsh-launcher` 进程目录** → **桌面快捷方式目标目录** → 行配置 `launcherDirs` →
+  本次运行中发现过的目录 → 包内 `launcher/bin`——状态判定、退出标记与启动目标因此
+  始终对齐到同一个实例；没有实例在运行时行为与旧版完全一致（仍回退到配置目录/包内副本），
+  指向已删除副本的失效快捷方式也会自动跳过。
+
+**内部改进**
+
+- 进程目录与快捷方式目标用 PowerShell 采集模式读取（`Get-Process` 取 `Path`、
+  WScript.Shell 读 `.lnk` 的 `TargetPath`），结果缓存 5 秒、脚本前置 UTF-8 输出编码；
+  探测失败静默回退，不影响旧路径。诊断信息新增 `runningDirs` / `shortcutTarget` 两行。
+
+<!-- en -->
+
+### English
+
+Fixes the settings "Desktop launch" section being out of sync with the desktop app that is
+actually running: the plugin now finds the live instance instead of only looking inside the
+npm package. Plugin-only release; desktop app behaviour is unchanged.
+
+**Fixed**
+
+- **"Desktop launch" state did not match reality, and the switch could neither stop nor start
+  the app**: heartbeats, the quit marker and the desktop app's own config all live next to the
+  desktop app executable, while the plugin only treated the packaged `launcher/bin` as a
+  candidate directory. When another copy was running (for example a local `build.ps1`
+  artifact), the plugin read no heartbeat → "unknown" state; the `.dsh-quit` marker was
+  written into the wrong directory so the running instance never saw it (could not be
+  stopped); and switching on spawned a second copy that fought the running one for the global
+  shortcut and the shell page port. The plugin now probes candidate directories in priority
+  order — `launcherExe` config → **the running `dsh-launcher` process directory** → **the
+  desktop shortcut target directory** → `launcherDirs` config → directories discovered in this
+  run → the packaged `launcher/bin` — so state, quit marker and launch target always line up
+  with one instance. With nothing running, behaviour is unchanged (still falls back to the
+  configured directory and the packaged copy), and a stale shortcut pointing at a deleted copy
+  is skipped automatically.
+
+**Internal**
+
+- Process directory and shortcut target are read through PowerShell in collect mode
+  (`Get-Process` for `Path`, WScript.Shell for the `.lnk` `TargetPath`), cached for 5 seconds,
+  with a UTF-8 output-encoding preamble; probe failures fall back silently to the old paths.
+  Diagnostics gained `runningDirs` / `shortcutTarget` lines.
+
 ## v1.0.9 — 未发布
 
 修好标题栏的两个老问题：◀/▶ 点了没反应、切主题后标题栏慢一拍；本版同时完成阶段二
