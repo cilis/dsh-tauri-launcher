@@ -35,15 +35,39 @@
 - 心跳新鲜窗口必须**大于写入周期**（默认 4 秒 vs 1 秒写入），留出读取抖动余量；
 - 退出确认双信号：退出标记被自删（快速确认，≤3.5 秒）或心跳过期（兜底，~4-6 秒）；标记未消费且心跳过期则 `Stop-Process` 强杀兜底。
 
+### 候选目录探测（协议落在哪一份副本上）
+
+标记文件与桌面应用配置都在 exe 同目录，所以「插件认哪一份副本」直接决定状态能否
+同步：桌面应用可能有多个副本（npm 包内 `launcher/bin`、本地 `build.ps1` 产物），
+而 DSH 是被哪一份拉起的并不确定。插件按优先级探测候选目录：
+
+1. 行配置 `launcherExe` 所在目录；
+2. 运行中的 `dsh-launcher` 进程目录（`Get-Process -Name dsh-launcher` 取 `Path`）；
+3. 桌面快捷方式 `DeepSeek Harness.lnk` 的目标目录（WScript.Shell 读 `TargetPath`）；
+4. 行配置 `launcherDirs`；
+5. 本次插件运行中发现过的目录；6. 包内 `launcher/bin`。
+
+- `exeDirs()` 只保留**确实含 `dsh-launcher.exe`** 的目录，失效的快捷方式目标自动跳过；
+  `pickExe()` 取列表首项，因此“启动哪一份”也遵循同一优先级（快捷方式目标优先于包内副本）；
+- 运行中实例与快捷方式目标用 subprocess 探测（**采集模式**：`stdio.stdout =
+  { maxBytes }` + `handle.collected.stdout.readFrom(0)`），脚本前置
+  `[Console]::OutputEncoding = UTF8`——PowerShell 5.1 默认按控制台代码页写重定向输出，
+  非 ASCII 路径会乱码；
+- 探测结果缓存 5 秒（状态轮询与启停等待循环都会反复取候选目录）；探测失败时
+  静默回退到第 4/6 项，不改变旧版行为；
+- 发现过的目录会话内**记住**（最近使用在前，上限 8）：实例退出后其心跳文件变成
+  「过期」而非「不存在」，状态因此稳定落在「已停止」，退出流程也不会中途丢目标。
+
 ## 启动/退出时序
 
 **启动**：残留退出标记为 `1` 时先取消 → `subprocess.spawn` 拉起 exe（stdio 对象
 `{stdin:'ignore', stdout:'inherit', stderr:'inherit'}`，graceMs 3000）→ 等心跳
-新鲜（20 秒窗口）→ 若快捷方式缺失则创建。
+新鲜（20 秒窗口）→ 若快捷方式缺失则创建。拉起前把该 exe 目录记入候选列表，
+避免探测缓存仍是旧值时漏看新实例的心跳。
 
-**退出**：写 `.dsh-quit`=`1` → 双信号确认（≤6 秒）→ 清除残留标记 → 删除桌面
-快捷方式；确认失败走 `Stop-Process -Name dsh-launcher -Force` 强杀（TerminateProcess，
-不影响 Harness 进程）。
+**退出**：写 `.dsh-quit`=`1`（写进**探测到的实例目录**，见上节）→ 双信号确认
+（≤6 秒）→ 清除残留标记 → 删除桌面快捷方式；确认失败走
+`Stop-Process -Name dsh-launcher -Force` 强杀（TerminateProcess，不影响 Harness 进程）。
 
 桌面应用侧：勾选「退出时结束 Harness 进程」时，托盘/标记退出统一经 `begin_exit`
 ——先销毁主窗口与设置窗口（`close_visible_windows`，屏幕上只留反馈窗口），再弹出
