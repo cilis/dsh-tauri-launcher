@@ -137,6 +137,23 @@ dsh plugin --profile web remove @lenorin/dsh-tauri-launcher
 > 注：原 `shortcutName` 配置项已移除（2026-09）——快捷方式文件名由插件与桌面应用
 > 共用同一常量（`DeepSeek Harness.lnk`）：两侧各自维护名字会导致各建出一个 .lnk。
 
+### 候选目录的自动探测
+
+心跳、退出标记与桌面应用配置都在**桌面应用 exe 同目录**，而桌面应用可能存在多份
+副本（npm 包内预编译 exe、本地 `build.ps1` 产物）。插件按下述优先级挑目录，因此
+无论实际运行的是哪一份副本，状态判定、退出标记与启动目标都会对齐到同一个实例：
+
+1. 行配置 `launcherExe` 所在目录（硬指定）；
+2. **正在运行的** `dsh-launcher` 进程所在目录（`Get-Process` 取 `Path`）；
+3. 桌面快捷方式 `DeepSeek Harness.lnk` 的目标目录（WScript.Shell 读 `TargetPath`）；
+4. 行配置 `launcherDirs`（候选列表）；
+5. 本次插件运行中发现过的目录（实例退出后仍扫描其心跳，避免状态在「已停止/未知」间抖动）；
+6. 包内 `launcher/bin`（兜底）。
+
+只有真的含 `dsh-launcher.exe` 的目录会被采用——指向已删除副本的失效快捷方式会自动
+跳过，回退到下一候选。运行中实例/快捷方式目标的探测结果缓存 5 秒；探测不可用时
+（无 `subprocess` 服务等）自动回退到第 4/6 项，行为与旧版一致。
+
 ## 桌面应用构建与发布
 
 - npm 包自带预编译 exe（`launcher/bin/dsh-launcher.exe`），插件安装后自动探测、装上即用；
