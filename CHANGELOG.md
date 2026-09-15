@@ -8,6 +8,57 @@
 截断，因此只显示中文）。小节内按 **新增 / 修复 / 变更 / 内部改进** 分组，无内容的
 分组省略；条目写「现象或功能 → 原因/影响 → 解决方式」，面向使用者，不照抄提交标题。
 
+## v1.0.11 — 未发布
+
+修好「设置里的桌面启动开关打开后桌面端起不来、关闭却一直正常」的问题：插件拉起桌面应用
+时不再继承 DSH 自己的标准输出句柄（那种句柄在桌面应用退出后已经断开，会让新进程一启动就
+崩溃），并把这个类别的失败直接报成设置里的红字提示。
+
+**修复**
+
+- **开关「打开」启不动桌面端，只有「关闭」正常**：插件此前用 `stdio: inherit` 拉起桌面
+  应用，而 DSH 自己往往就是被桌面应用拉起的——它的 stdout/stderr 正是桌面应用当时创建的
+  管道。桌面应用一退出，这根管道的读端随之消失；此后以 `inherit` 拉起的桌面应用继承到的
+  是**已断开的手柄**，一写就 panic 退出（实测 `exit code 101`，进程存活不到 1 秒），于是
+  表现为「开关弹回、桌面端没出现」。改为**收集模式**（管道由 DSH 侧持有）后，桌面应用在
+  任何启停时序下都能正常启动。
+- **失败不再静默**：桌面应用若在 20 秒就绪窗口内退出，设置面板现在直接给出红字
+  「桌面应用启动后立即退出（exit code …）」，展开诊断可见新增的 `appExit` 与
+  `appOutput`（应用自己的输出）两行——此前只会静默等满 20 秒再显示「已停止」，用户无从
+  判断原因。
+
+**内部改进**
+
+- 桌面应用的启动输出改由插件收集（不再继承 DSH 的控制台），随诊断一并展示。
+
+<!-- en -->
+
+### English
+
+Fixes the settings switch failing to start the desktop app while stopping it kept working: the
+plugin no longer hands its own standard-output handles to the desktop app (those handles are
+already broken once the desktop app has exited, which crashed the new process on startup), and
+this class of failure is now reported as a visible error in the settings panel.
+
+**Fixed**
+
+- **Switching "Desktop launch" on did not start the desktop app, while switching it off worked**:
+  the plugin used `stdio: inherit` to launch the desktop app, but DSH itself is usually started
+  by that very app — its stdout/stderr are the pipes the app created. Once the app exits, those
+  pipes lose their reader, so a process launched with `inherit` afterwards receives **broken
+  handles**, panics on its first write and exits (measured `exit code 101`, alive for under a
+  second), which surfaced as the switch flipping back with no app window. Launching in
+  **collect mode** (pipes owned by DSH) starts reliably regardless of start/stop ordering.
+- **Failures are no longer silent**: when the desktop app exits inside the 20-second readiness
+  window, the panel now shows "the desktop app exited immediately after launch (exit code …)"
+  and the diagnostics gained the `appExit` and `appOutput` (the app's own output) lines. Before,
+  the panel waited silently for 20 seconds and then reported "stopped" with no explanation.
+
+**Internal**
+
+- The desktop app's startup output is now collected by the plugin (instead of inheriting DSH's
+  console) and shown alongside the diagnostics.
+
 ## v1.0.10 — 未发布
 
 修好设置里「桌面启动」与实际运行的桌面端不同步的问题：插件现在会自动找到正在运行的
