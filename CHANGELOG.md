@@ -8,7 +8,7 @@
 截断，因此只显示中文）。小节内按 **新增 / 修复 / 变更 / 内部改进** 分组，无内容的
 分组省略；条目写「现象或功能 → 原因/影响 → 解决方式」，面向使用者，不照抄提交标题。
 
-## v1.0.11 — 未发布
+## v1.0.11 — 2026-09-15
 
 修好「设置里的桌面启动开关打开后桌面端起不来、关闭却一直正常」的问题：插件拉起桌面应用
 时不再继承 DSH 自己的标准输出句柄（那种句柄在桌面应用退出后已经断开，会让新进程一启动就
@@ -59,7 +59,7 @@ this class of failure is now reported as a visible error in the settings panel.
 - The desktop app's startup output is now collected by the plugin (instead of inheriting DSH's
   console) and shown alongside the diagnostics.
 
-## v1.0.10 — 未发布
+## v1.0.10 — 2026-09-15
 
 修好设置里「桌面启动」与实际运行的桌面端不同步的问题：插件现在会自动找到正在运行的
 那一份桌面应用实例（不再只认 npm 包内的副本）。本版只改插件，桌面应用行为不变。
@@ -115,7 +115,7 @@ npm package. Plugin-only release; desktop app behaviour is unchanged.
   with a UTF-8 output-encoding preamble; probe failures fall back silently to the old paths.
   Diagnostics gained `runningDirs` / `shortcutTarget` lines.
 
-## v1.0.9 — 未发布
+## v1.0.9 — 2026-09-14
 
 修好标题栏的两个老问题：◀/▶ 点了没反应、切主题后标题栏慢一拍；本版同时完成阶段二
 （解耦）与阶段三（打磨）两轮重构，内部实现更整齐，对外行为不变。
