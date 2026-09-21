@@ -274,3 +274,26 @@ DSH 是 React SPA，切会话不产生浏览器历史（`history.back()` 会退�
 `desktop: true | false | null`（运行中/已停止/状态未知）+ `shortcut: bool`。
 切换操作走乐观 UI：点击即切开关位置并显示“正在启动…/正在退出…”，确认后定型；
 成功后跳过即时刷新防止心跳窗口内回跳，由 10 秒周期刷新收敛。
+
+## 附录：静默失效排查表
+
+**本表只做索引，不重述原理**——每条的原理与实测数据在上文对应章节，这里只回答
+「看到什么现象，该去查哪一节、先用哪条命令排除」。
+
+Tauri 侧最贵的 bug 不是崩溃，而是**配错了却不报错**：功能像没接线一样失效，日志干净，
+只能靠猜。本表把已踩过的收敛成「症状 → 真因 → 去哪一节」。
+
+| 症状 | 真因（一句话） | 详见 |
+| --- | --- | --- |
+| 浏览器网页能拖拽上传，桌面端拖上去毫无反应 | WebView2 的 `dragDropEnabled` 默认 `true`，吞掉 HTML5 拖放事件、只发原生事件 | `tauri.conf.json` 的 `windows[].dragDropEnabled: false` |
+| 运行时换图标（`set_icon` / `WM_SETICON` / `GCLP_HICON` 都试过）任务栏按钮就是不变 | 任务栏按钮画的是 **exe 内嵌图标**，运行时改不动；那些 API 只影响标题栏与 Alt-Tab | §任务栏按钮图标的来源 |
+| iframe 永久白页、只有一行英文小字；手写 HTML 却能显示 | 会话 cookie 是 `SameSite=Strict`，比「站点」时**忽略端口、只比主机** → 跨站拒收 `Set-Cookie` | §外壳页承载与 DSH 鉴权适配 |
+| 窗口拖不动（`data-tauri-drag-region` 已挂，无任何报错） | `core:window:default` **不含** `allow-start-dragging`，缺失即静默拒绝 | §标题栏与窗口外壳 |
+| 应用命令 IPC 返回 `Command X not allowed by ACL` | 新增/重命名 `#[tauri::command]` 后没同步 `permissions/launcher.toml`；**漏了不会编译报错** | `permissions/launcher.toml` 顶部注释 + AGENTS.md §7.1 命令 5（可执行核查） |
+
+### 核查命令的位置
+
+两条可执行核查命令——**命令 5（Rust 注册的命令是否都已在 ACL 声明）**与
+**命令 6（capability 里哪些 `core:window` 权限已在 `core:default` 内）**——
+连同「审计要做两个方向」的实例，登记在 `launcher/AGENTS.md` 的 **§7.1 冻结基线**。
+本节只做索引，不在事实文档里重复验证流程。
