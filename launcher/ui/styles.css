@@ -254,6 +254,7 @@ body {
 }
 
 #menu-btn,
+#window-btn,
 #help-btn {
   height: 28px;
   padding: 0 10px;
@@ -268,12 +269,15 @@ body {
 
 #menu-btn:hover,
 #menu-btn.open,
+#window-btn:hover,
+#window-btn.open,
 #help-btn:hover,
 #help-btn.open {
   background: var(--tb-hover, rgba(17, 24, 39, 0.08));
 }
 
 #menu-panel,
+#window-panel,
 #help-panel {
   position: absolute;
   top: 34px;
