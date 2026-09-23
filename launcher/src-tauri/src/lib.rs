@@ -81,6 +81,7 @@ pub fn run() {
             settings::set_terminate_harness_on_exit_setting,
             windows::close_settings,
             windows::open_settings_window,
+            windows::hide_all_windows,
             windows::open_in_browser,
             shutdown::quit_app
         ])
