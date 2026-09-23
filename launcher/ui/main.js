@@ -1,6 +1,6 @@
 // DeepSeek Harness 启动器外壳（主窗口）：
 // 1. 启动流程：检测安装 → 自动安装（动画+日志）→ 成功提示 → 启动并跳转到本地 Web 界面；
-// 2. 标题栏：三键、前进/后退、文件/帮助菜单（DSH 就绪后显示，iframe 承载 DSH）；
+// 2. 标题栏：三键、前进/后退、文件/窗口/帮助菜单（DSH 就绪后显示，iframe 承载 DSH）；
 // 3. 主题跟随：DSH 主题中继（--tb-* 变量）与 Windows 系统主题兜底。
 // 通过 withGlobalTauri 注入的 window.__TAURI__ 调用后端命令。
 //
@@ -194,18 +194,67 @@
     document.getElementById("tb-forward")?.addEventListener("click", () => sendNavCommand("forward"));
   }
 
-  /** 标题栏菜单（文件 / 帮助）。 */
+  /** 标题栏菜单（文件 / 窗口 / 帮助）：面板与条目都由数组驱动，新增菜单 = 加一条数据。 */
   function setupMenus() {
-    const menuBtn = document.getElementById("menu-btn");
-    const menuPanel = document.getElementById("menu-panel");
-    const helpBtn = document.getElementById("help-btn");
-    const helpPanel = document.getElementById("help-panel");
+    // 面板锚点：数组驱动互斥——任一时刻至多一个面板展开
+    const MENUS = [
+      { btn: "menu-btn", panel: "menu-panel" },
+      { btn: "window-btn", panel: "window-panel" },
+      { btn: "help-btn", panel: "help-panel" },
+    ].map(({ btn, panel }) => ({
+      btn: document.getElementById(btn),
+      panel: document.getElementById(panel),
+    }));
+
+    /** 外链统一入口：URL 表唯一维护在 Rust 侧（windows.rs::EXTERNAL_LINKS），前端只传 key。 */
+    const openInBrowser = (key) =>
+      invoke("open_in_browser", { key }).catch((e) =>
+        console.error("浏览器打开失败", e),
+      );
+
+    // 条目表：id → 动作。keepOpen（退出）保持「不收起菜单」的原行为。
+    // 新增外链须在此加一条（id 形如 help-<key>）并在 Rust 表里加同名条目。
+    const MENU_ITEMS = [
+      {
+        id: "menu-settings",
+        run: () =>
+          invoke("open_settings_window").catch((e) =>
+            console.error("打开设置失败", e),
+          ),
+      },
+      {
+        id: "menu-reload",
+        run: () => {
+          // iframe 跨源无法直接 contentWindow.location.reload()，重设 src 重载
+          const frame = document.getElementById("dsh-frame");
+          if (frame && frameUrl) frame.src = frameUrl;
+        },
+      },
+      // 「在浏览器中打开」本地 DSH：URL 由后端按 key 解析（新版地址含进程 token）
+      { id: "menu-browser", run: () => openInBrowser("dsl") },
+      {
+        id: "menu-quit",
+        keepOpen: true,
+        run: () =>
+          invoke("quit_app").catch((e) => console.error("退出失败", e)),
+      },
+      // 关闭窗口：隐藏主窗与设置窗（Rust hide_all_windows），托盘与 Harness 子进程不受影响
+      {
+        id: "window-close",
+        run: () =>
+          invoke("hide_all_windows").catch((e) =>
+            console.error("关闭窗口失败", e),
+          ),
+      },
+      { id: "help-website", run: () => openInBrowser("website") },
+      { id: "help-docs", run: () => openInBrowser("docs") },
+    ];
 
     function closeMenus() {
-      menuPanel?.classList.add("hidden");
-      menuBtn?.classList.remove("open");
-      helpPanel?.classList.add("hidden");
-      helpBtn?.classList.remove("open");
+      for (const { btn, panel } of MENUS) {
+        panel?.classList.add("hidden");
+        btn?.classList.remove("open");
+      }
     }
 
     function togglePanel(btn, panel) {
@@ -217,63 +266,38 @@
       }
     }
 
-    menuBtn?.addEventListener("click", () => togglePanel(menuBtn, menuPanel));
-    helpBtn?.addEventListener("click", () => togglePanel(helpBtn, helpPanel));
+    for (const { btn, panel } of MENUS) {
+      btn?.addEventListener("click", () => togglePanel(btn, panel));
+    }
 
-    // 点击标题栏其他区域收起；切到 iframe（父窗口失焦）时也收起
+    // 点击标题栏其他区域收起；切到 iframe（父窗口失焦）时也收起。
+    // 命中某个菜单按钮时，只有「其它面板正展开」才先全部收起——否则会把
+    // 点击自身按钮的收起动作变成重新展开（togglePanel 内部已含 closeMenus）。
     document.addEventListener("mousedown", (e) => {
-      const inMenu =
-        (menuPanel && menuPanel.contains(e.target)) ||
-        e.target === menuBtn ||
-        (helpPanel && helpPanel.contains(e.target)) ||
-        e.target === helpBtn;
-      if (!inMenu) closeMenus();
-      else if (e.target === menuBtn && helpPanel && !helpPanel.classList.contains("hidden")) closeMenus();
-      else if (e.target === helpBtn && menuPanel && !menuPanel.classList.contains("hidden")) closeMenus();
+      const inMenu = MENUS.some(
+        ({ btn, panel }) =>
+          (panel && panel.contains(e.target)) || e.target === btn,
+      );
+      if (!inMenu) {
+        closeMenus();
+        return;
+      }
+      const hit = MENUS.find(({ btn }) => e.target === btn);
+      const othersOpen = MENUS.some(
+        (m) => m !== hit && !m.panel?.classList.contains("hidden"),
+      );
+      if (hit && othersOpen) closeMenus();
     });
     window.addEventListener("blur", closeMenus);
-
-    document
-      .getElementById("menu-settings")
-      ?.addEventListener("click", () => {
-        closeMenus();
-        void invoke("open_settings_window").catch((e) =>
-          console.error("打开设置失败", e),
-        );
-      });
-
-    document
-      .getElementById("menu-reload")
-      ?.addEventListener("click", () => {
-        closeMenus();
-        // iframe 跨源无法直接 contentWindow.location.reload()，重设 src 重载
-        const frame = document.getElementById("dsh-frame");
-        if (frame && frameUrl) frame.src = frameUrl;
-      });
-
-    document
-      .getElementById("menu-browser")
-      ?.addEventListener("click", () => {
-        closeMenus();
-        // URL 由后端按 key 解析（新版 DSH 的地址含进程 token，由应用侧持有）
-        void invoke("open_in_browser", { key: "dsl" }).catch((e) =>
-          console.error("浏览器打开失败", e),
-        );
-      });
-
-    document.getElementById("menu-quit")?.addEventListener("click", () => {
-      void invoke("quit_app").catch((e) => console.error("退出失败", e));
+    // Esc 收起（焦点在外壳页时生效；焦点进入 iframe 由上面的 blur 兜底）
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeMenus();
     });
 
-    // 帮助菜单：默认浏览器打开官网 / 文档。
-    // ⚠️ URL 表唯一维护在 Rust 侧（windows.rs::EXTERNAL_LINKS），前端只传 key；
-    // 新增外链须在此加一个按钮 id（help-<key>）并在 Rust 表里加同名条目。
-    for (const key of ["website", "docs"]) {
-      document.getElementById(`help-${key}`)?.addEventListener("click", () => {
-        closeMenus();
-        void invoke("open_in_browser", { key }).catch((e) =>
-          console.error("浏览器打开失败", e),
-        );
+    for (const { id, run, keepOpen } of MENU_ITEMS) {
+      document.getElementById(id)?.addEventListener("click", () => {
+        if (!keepOpen) closeMenus();
+        run();
       });
     }
   }
