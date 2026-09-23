@@ -131,6 +131,22 @@ pub(crate) fn close_settings(app: AppHandle) {
     }
 }
 
+/// 外壳菜单「关闭窗口」：隐藏主窗口与设置窗口，保留托盘与 Harness 子进程。
+///
+/// 🔴 禁止改用 `close_visible_windows()`——那是退出流程专用的 `destroy()`，
+/// 窗口销毁后没有重建路径，托盘「打开」会失效（应用变僵尸）。本命令只用
+/// `hide()`；恢复路径是托盘 `MENU_SHOW` 与全局快捷键（均为
+/// show + unminimize + set_focus）。`hide()` 幂等：重复触发、或设置窗从未
+/// 打开过（预建后一直隐藏）都无副作用。
+#[tauri::command]
+pub(crate) fn hide_all_windows(app: AppHandle) {
+    for label in [WINDOW_MAIN, WINDOW_SETTINGS] {
+        if let Some(w) = app.get_webview_window(label) {
+            let _ = w.hide();
+        }
+    }
+}
+
 /// 主窗口自绘标题栏菜单：打开设置窗口（显示预建实例）。
 #[tauri::command]
 pub(crate) fn open_settings_window(app: AppHandle) {
