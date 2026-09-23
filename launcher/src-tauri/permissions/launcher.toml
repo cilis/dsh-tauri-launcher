@@ -24,6 +24,7 @@ commands.allow = [
   "set_terminate_harness_on_exit_setting",
   "close_settings",
   "open_settings_window",
+  "hide_all_windows",
   "open_in_browser",
   "quit_app",
 ]
