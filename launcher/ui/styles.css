@@ -448,3 +448,151 @@ body {
     opacity: 1;
   }
 }
+
+/* 「关于」页内 overlay：三版本号 + 检查更新。
+   配色走 --tb-*（与菜单/标题栏同一套运行时主题变量），不引入新的静态色板 */
+#about-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 8, 15, 0.5);
+}
+
+.about-card {
+  width: min(440px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 16px 18px 18px;
+  background: var(--tb-menu-bg, #e9ecf2);
+  color: var(--tb-fg, #0f1115);
+  border: 1px solid var(--tb-menu-border, rgba(0, 0, 0, 0.1));
+  border-radius: 12px;
+  box-shadow: var(--tb-menu-shadow, 0 10px 34px rgba(15, 23, 42, 0.14));
+}
+
+.about-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.about-head h2 {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+#about-close {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: default;
+}
+
+#about-close:hover {
+  background: var(--tb-hover, rgba(17, 24, 39, 0.08));
+}
+
+.about-versions {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 14px;
+  margin-top: 14px;
+  font-size: 13px;
+}
+
+.about-versions dt {
+  opacity: 0.7;
+}
+
+.about-versions dd {
+  font-variant-numeric: tabular-nums;
+}
+
+.about-update {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--tb-sep, rgba(0, 0, 0, 0.06));
+}
+
+.about-check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#about-check,
+#about-download,
+#about-copy {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--tb-menu-border, rgba(0, 0, 0, 0.12));
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: default;
+}
+
+#about-check:hover,
+#about-download:hover,
+#about-copy:hover {
+  background: var(--tb-hover, rgba(17, 24, 39, 0.08));
+}
+
+#about-check:disabled {
+  opacity: 0.55;
+}
+
+#about-check-status {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+#about-update-result {
+  margin-top: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+#about-update-drift {
+  margin-top: 6px;
+  color: var(--tb-danger, #dc2626);
+}
+
+#about-update-actions {
+  margin-top: 10px;
+}
+
+#about-exe-path {
+  font-size: 12px;
+  opacity: 0.8;
+  word-break: break-all;
+}
+
+.about-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* 复制升级命令的隐藏载体（回退路径用；不占布局、不可交互） */
+.about-clip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}

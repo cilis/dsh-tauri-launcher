@@ -84,6 +84,13 @@
         </div>
       </div>
       <div class="menu-anchor">
+        <button id="about-btn" class="menu-btn" title="关于" aria-haspopup="true">关于</button>
+        <div id="about-panel" class="menu-panel hidden" role="menu">
+          <button class="menu-item" id="about-info" role="menuitem">关于 Launcher</button>
+          <button class="menu-item" id="about-update" role="menuitem">检查更新</button>
+        </div>
+      </div>
+      <div class="menu-anchor">
         <button id="help-btn" class="menu-btn" title="帮助" aria-haspopup="true">帮助</button>
         <div id="help-panel" class="menu-panel hidden" role="menu">
           <button class="menu-item" id="help-website" role="menuitem">DSH官网</button>
@@ -110,6 +117,42 @@
       <span id="auth-hint-text">检测到正在运行的新版 DeepSeek Harness 实例。若下方页面未正常加载，可点击「关闭并重启」由启动器接管（会终止外部实例及其中的会话），或在浏览器中使用该实例启动时打印的 URL。</span>
       <button id="auth-hint-restart">关闭并重启</button>
       <button id="auth-hint-close" title="关闭提示">×</button>
+    </div>
+
+    <!-- 「关于」页内 overlay（D7：不新增 webview——新窗口必须遵守启动早期预建约束）：
+         三版本号 + 检查更新。Esc / 点遮罩 / 关闭按钮三种方式都能关掉 -->
+    <div id="about-overlay" class="hidden">
+      <div class="about-card" role="dialog" aria-modal="true" aria-labelledby="about-title">
+        <header class="about-head">
+          <h2 id="about-title">关于 Launcher</h2>
+          <button id="about-close" title="关闭" aria-label="关闭">×</button>
+        </header>
+
+        <dl class="about-versions">
+          <dt>启动器</dt><dd id="about-launcher">—</dd>
+          <dt>DSH</dt><dd id="about-dsh">—</dd>
+          <dt>Node</dt><dd id="about-node">—</dd>
+        </dl>
+
+        <section class="about-update">
+          <div class="about-check-row">
+            <button id="about-check">检查更新</button>
+            <span id="about-check-status"></span>
+          </div>
+          <div id="about-update-result" class="hidden">
+            <p id="about-update-launcher"></p>
+            <p id="about-update-dsh"></p>
+            <p id="about-update-drift" class="hidden"></p>
+            <div id="about-update-actions" class="hidden">
+              <p id="about-exe-path"></p>
+              <div class="about-buttons">
+                <button id="about-download">打开下载页</button>
+                <button id="about-copy">复制升级命令</button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
     </div>
   </body>
 </html>
