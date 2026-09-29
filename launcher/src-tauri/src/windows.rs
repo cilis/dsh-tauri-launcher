@@ -158,9 +158,14 @@ pub(crate) fn open_settings_window(app: AppHandle) {
 /// 外壳可请求打开的外链：key → URL（**唯一来源**，前端只传 key）。
 /// 优化报告 v2 B4：原先 URL 表同时维护在 Rust 白名单与前端 HELP_URLS，
 /// 新增外链要改两处且容易漏；现在前端不持有任何 URL，由本表解析。
-const EXTERNAL_LINKS: [(&str, &str); 2] = [
+const EXTERNAL_LINKS: [(&str, &str); 3] = [
     ("website", "https://www.deepseek.com/harness/"),
     ("docs", "https://deepseek-harness.github.io/deepseek-harness/guide/quickstart"),
+    // 「关于 → 检查更新」的下载页：启动器本体只发 GitHub Release（npm 渠道走 dsh plugin add）
+    (
+        "releases",
+        "https://github.com/cilis/dsh-tauri-launcher/releases/latest",
+    ),
 ];
 
 /// 「在浏览器中打开」本地 DSH 的 key：URL 由应用状态给出——新版 DSH 的

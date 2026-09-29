@@ -15,6 +15,7 @@
 mod dsh;
 mod harness;
 mod icons;
+mod info;
 mod markers;
 mod settings;
 mod shell_server;
@@ -74,6 +75,8 @@ pub fn run() {
             harness::launch_dsh,
             harness::restart_dsh_external,
             harness::stop_dsh,
+            info::get_versions,
+            info::check_updates,
             settings::get_settings,
             settings::set_autostart_setting,
             settings::set_global_shortcut_setting,
