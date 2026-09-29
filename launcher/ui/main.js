@@ -1,11 +1,12 @@
 // DeepSeek Harness 启动器外壳（主窗口）：
 // 1. 启动流程：检测安装 → 自动安装（动画+日志）→ 成功提示 → 启动并跳转到本地 Web 界面；
-// 2. 标题栏：三键、前进/后退、文件/窗口/帮助菜单（DSH 就绪后显示，iframe 承载 DSH）；
+// 2. 标题栏：三键、前进/后退、文件/窗口/关于/帮助菜单（DSH 就绪后显示，iframe 承载 DSH）；
 // 3. 主题跟随：DSH 主题中继（--tb-* 变量）与 Windows 系统主题兜底。
 // 通过 withGlobalTauri 注入的 window.__TAURI__ 调用后端命令。
 //
 // 模块级结构（2026-09 阶段一拆分，见优化报告 v2）：
 // - setupWindowButtons / setupNavButtons / setupMenus / setupMaxGlyph（原 setupTitlebar 拆分）
+// - setupAbout / openAbout：页内「关于」overlay（三版本号 + 检查更新，不新增 webview）
 // - postToFrame：向 iframe 发送 postMessage 的唯一出口（origin 缓存于 showFrame）
 // - setupThemeFollow：主题中继 + 导航状态 + 系统主题转发 + matchMedia 兜底
 /* global window, document */
@@ -200,6 +201,7 @@
     const MENUS = [
       { btn: "menu-btn", panel: "menu-panel" },
       { btn: "window-btn", panel: "window-panel" },
+      { btn: "about-btn", panel: "about-panel" },
       { btn: "help-btn", panel: "help-panel" },
     ].map(({ btn, panel }) => ({
       btn: document.getElementById(btn),
@@ -246,6 +248,9 @@
             console.error("关闭窗口失败", e),
           ),
       },
+      // 「关于」菜单：关于 Launcher（三版本号）/ 检查更新（npm 两查 + 出路三件套）
+      { id: "about-info", run: () => openAbout(false) },
+      { id: "about-update", run: () => openAbout(true) },
       { id: "help-website", run: () => openInBrowser("website") },
       { id: "help-docs", run: () => openInBrowser("docs") },
     ];
@@ -325,12 +330,174 @@
     void refreshMaxGlyph();
   }
 
+  /* ---------- 「关于」弹窗（三版本号 + 检查更新） ---------- */
+  // 页内 overlay，不新增 webview（新窗口须遵守启动早期预建约束，见 windows.rs）。
+  // 「检查更新」只在用户点击时发起，不做后台轮询（v1.2 再谈）。
+
+  /** 最近一次检查更新的结果（「复制升级命令」取文本用）。 */
+  let aboutReport = null;
+
+  /** 重置更新区到初始态：每次打开弹窗都重新检查，不展示上一次的陈旧结果。 */
+  function resetUpdateArea() {
+    aboutReport = null;
+    setText("about-check-status", "");
+    document.getElementById("about-update-result")?.classList.add("hidden");
+    document.getElementById("about-update-drift")?.classList.add("hidden");
+    document.getElementById("about-update-actions")?.classList.add("hidden");
+  }
+
+  /** 打开「关于」弹窗；autoCheck（菜单「检查更新」）为真时立即开始检查。 */
+  function openAbout(autoCheck) {
+    const overlay = document.getElementById("about-overlay");
+    if (!overlay) return;
+    resetUpdateArea();
+    overlay.classList.remove("hidden");
+    void loadVersions();
+    if (autoCheck) void runUpdateCheck();
+  }
+
+  function closeAbout() {
+    document.getElementById("about-overlay")?.classList.add("hidden");
+  }
+
+  /** 三版本号：三项各自探测、各自容错（未安装 / 未知只影响自己那一行）。 */
+  async function loadVersions() {
+    try {
+      const v = await invoke("get_versions");
+      setText("about-launcher", v.launcher ? `v${v.launcher}` : "未知");
+      setText("about-dsh", v.dsh ? `v${v.dsh}` : "未安装");
+      setText("about-node", v.node || "未知");
+    } catch (e) {
+      console.error("读取版本失败", e);
+      setText("about-launcher", "未知");
+      setText("about-dsh", "未知");
+      setText("about-node", "未知");
+    }
+  }
+
+  /** 单项对比文案：本地版本一定有，远端可能是「未能获取」（离线 / 超时 / npm 缺失）。 */
+  function describeUpdate(label, item) {
+    const current = item?.current ? `v${item.current}` : "未知";
+    if (!item?.latest) return `${label}：${current}（未能获取最新版本）`;
+    if (item.latest === item.current) return `${label}：已是最新（${current}）`;
+    return `${label}：新版本 v${item.latest}（当前 ${current}）`;
+  }
+
+  function renderUpdateReport(report) {
+    setText("about-update-launcher", describeUpdate("启动器 + 插件", report.launcher));
+    setText("about-update-dsh", describeUpdate("DSH", report.dsh));
+
+    const drift = document.getElementById("about-update-drift");
+    if (drift) {
+      if (report.drift) {
+        drift.textContent = report.drift;
+        drift.classList.remove("hidden");
+      } else {
+        drift.classList.add("hidden");
+      }
+    }
+
+    // 出路三件套只在真有新版本时出现：当前 exe 完整路径 + 打开下载页 + 复制升级命令
+    const hasUpdate = [report.launcher, report.dsh].some(
+      (item) => item?.latest && item.current && item.latest !== item.current,
+    );
+    const actions = document.getElementById("about-update-actions");
+    if (actions) {
+      if (hasUpdate) {
+        setText("about-exe-path", `当前运行的 exe：${report.exe_path || "未知"}`);
+        actions.classList.remove("hidden");
+      } else {
+        actions.classList.add("hidden");
+      }
+    }
+
+    const status = document.getElementById("about-check-status");
+    if (status) {
+      status.textContent = report.error
+        ? `检查失败：${report.error}`
+        : hasUpdate
+          ? ""
+          : "已是最新";
+    }
+    document.getElementById("about-update-result")?.classList.remove("hidden");
+  }
+
+  /** 「检查更新」：按钮禁用 + 状态文案；超时由 Rust 侧兜底（8 秒），不阻塞标题栏。 */
+  async function runUpdateCheck() {
+    const btn = document.getElementById("about-check");
+    const status = document.getElementById("about-check-status");
+    if (btn) btn.disabled = true;
+    if (status) status.textContent = "检查中…";
+    document.getElementById("about-update-result")?.classList.add("hidden");
+    try {
+      const report = await invoke("check_updates");
+      aboutReport = report;
+      renderUpdateReport(report);
+    } catch (e) {
+      if (status) status.textContent = `检查失败：${formatError(e)}`;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  /** 复制升级命令：优先 Clipboard API，失败回退到临时 textarea + execCommand。 */
+  async function copyUpgradeCommand() {
+    const text = aboutReport?.upgrade_command || "";
+    if (!text) return;
+    const btn = document.getElementById("about-copy");
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.className = "about-clip";
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+      } catch {
+        /* 自动复制不可用：命令原文已在弹窗内，用户可手动选取 */
+      }
+      ta.remove();
+    }
+    if (btn) {
+      const original = btn.textContent;
+      btn.textContent = "已复制";
+      setTimeout(() => {
+        btn.textContent = original;
+      }, 1500);
+    }
+  }
+
+  function setupAbout() {
+    document.getElementById("about-close")?.addEventListener("click", closeAbout);
+    // 点遮罩关闭；点卡片内部不关
+    document.getElementById("about-overlay")?.addEventListener("mousedown", (e) => {
+      if (e.target?.id === "about-overlay") closeAbout();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeAbout();
+    });
+    document
+      .getElementById("about-check")
+      ?.addEventListener("click", () => void runUpdateCheck());
+    document.getElementById("about-download")?.addEventListener("click", () => {
+      void invoke("open_in_browser", { key: "releases" }).catch((e) =>
+        console.error("浏览器打开失败", e),
+      );
+    });
+    document
+      .getElementById("about-copy")
+      ?.addEventListener("click", () => void copyUpgradeCommand());
+  }
+
   function setupTitlebar() {
     if (!window.__TAURI__) return;
     const appWindow = window.__TAURI__.window.getCurrentWindow();
     setupWindowButtons(appWindow);
     setupNavButtons();
     setupMenus();
+    setupAbout();
     setupMaxGlyph(appWindow);
   }
 
