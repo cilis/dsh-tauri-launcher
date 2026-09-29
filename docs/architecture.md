@@ -184,16 +184,44 @@ exe 目录记入候选列表，避免探测缓存仍是旧值时漏看新实例�
   真正退出走托盘菜单或标题栏菜单的「退出」；
 - **◀/▶**：会话导航（见下节），另支持 Alt+←/→ 与鼠标侧键；可用性由插件回传后置灰；
 - **标题栏菜单**：文件（设置 / 重新加载页面 / 在浏览器中打开 / 退出）· 窗口（关闭窗口）·
-  帮助（官网 / 文档）；「关于」菜单待 W1/W2 就位后按同一机制追加。面板与条目由
+  关于（关于 Launcher / 检查更新）· 帮助（官网 / 文档）。面板与条目由
   `ui/main.js::setupMenus()` 的数组（`MENUS` / `MENU_ITEMS`）驱动互斥与绑定——
   **新增菜单 = 一个 `.menu-anchor` + 一条 `MENUS` 数据**，按钮与面板按 `.menu-btn` /
   `.menu-panel` **class** 定位（不是 id），故 `styles.css` 无需改动，互斥逻辑也无需改动。
   「关闭窗口」走 Rust 命令 `hide_all_windows`（`hide()`，**不是**退出流程的 `destroy()`），
   恢复走托盘「打开」或全局快捷键；
   外链 URL 表唯一维护在 Rust 侧（`EXTERNAL_LINKS`），前端只传 key（`dsl` 为本地 DSH，
-  地址取自应用状态以带上 token）；
+  地址取自应用状态以带上 token；`releases` 为启动器下载页）；
 - **窗口拖动**：`data-tauri-drag-region`；capability 必须显式包含
   `core:window:allow-start-dragging`（`core:window:default` 不含，缺失时拖动被静默拒绝）。
+
+## 关于弹窗与更新检查
+
+「关于」菜单的两项共用一个**页内 overlay**（`index.html` 的 `#about-overlay`），
+数据来自 `info.rs` 的两个命令：
+
+- **「关于 Launcher」**（`get_versions`）：三项版本各自独立探测、各自容错——启动器
+  （`app.package_info().version`）、DSH（`dsh::check().version`）、Node
+  （`node --version`）。未安装显示「未安装」、探测不到显示「未知」，任一项失败都不影响弹窗；
+- **「检查更新」**（`check_updates`，点菜单项会直接开弹窗并自动开始检查）：
+  - 只查**两项**：① 启动器 + 插件（**同号**——`build.ps1 -Bump` 同步三处版本号，npm 包自带
+    exe，拆两项等于把同一个数字展示两遍）② DSH 本体（独立版本号）。两项在 Rust 侧**并行**查询；
+  - 查询复用既有 npm 工具链（`npm view <pkg> version`，Windows 上经 `cmd /C`），**不引入
+    HTTP 依赖**——外壳页的 CSP 是 `default-src 'self'`，页面无法直连 registry，必须由 Rust 发起；
+  - 超时 **8 秒**（本机实测单次约 3.7 秒），失败给明确原因（超时 / npm 缺失 / registry 报错），
+    不长时间转圈；
+  - 真有新版本时才给出**出路三件套**：**当前正在运行的 exe 完整路径**（`current_exe()`，
+    多副本场景下必须是这一份，否则用户会替换错文件）、「打开下载页」（`releases` 外链）、
+    「复制升级命令」（`dsh plugin --profile <p> add @lenorin/dsh-tauri-launcher`，profile 名
+    从已装插件路径推断，回退 `web`）；
+  - **漂移不占检测项**：只有当运行中的 exe 与已装插件版本不一致（自己从 GitHub 下载 exe 的场景）
+    时才多显示一行附注；
+  - **不做后台轮询**——只在用户点击时发起，避免无谓网络请求。
+- **为什么是 overlay 而不是新窗口**：任何新 webview 都必须遵守「启动早期预建」约束
+  （主窗口 iframe 加载跨源 DSH 后同步 build 第二个 webview 会死锁），成本与风险都远高于一个
+  overlay。
+- 关闭方式三种：Esc、点遮罩、点关闭按钮（`.hidden` 自带 `!important`，不受 overlay 的
+  `display: flex` 影响）。
 
 ## 标题栏主题跟随链路
 
