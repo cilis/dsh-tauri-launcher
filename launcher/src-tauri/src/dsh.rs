@@ -90,7 +90,8 @@ pub struct CheckResult {
     pub error: Option<String>,
 }
 
-fn read_pkg_version(pkg_json: &Path) -> Option<String> {
+/// 读取某个已安装包的 `package.json` 里的版本号（info.rs 复用同一实现）。
+pub(crate) fn read_pkg_version(pkg_json: &Path) -> Option<String> {
     let text = std::fs::read_to_string(pkg_json).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
     v.get("version").and_then(|v| v.as_str()).map(String::from)
