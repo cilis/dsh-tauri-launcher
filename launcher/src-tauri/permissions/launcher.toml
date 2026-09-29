@@ -17,6 +17,8 @@ commands.allow = [
   "launch_dsh",
   "restart_dsh_external",
   "stop_dsh",
+  "get_versions",
+  "check_updates",
   "get_settings",
   "set_autostart_setting",
   "set_global_shortcut_setting",
