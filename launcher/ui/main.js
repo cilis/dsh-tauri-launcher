@@ -511,7 +511,6 @@
       fg: "#0f1115", // --dsw-alias-label-primary: bluish-1000
       titleFg: "#0f1115",
       hover: "rgba(17, 24, 39, 0.08)",
-      menuBg: "#e9ecf2", // --dsw-alias-bg-overlay: bluish-150
       menuBorder: "rgba(0, 0, 0, 0.10)", // --dsw-alias-border-l2: #0000001a
       menuShadow: "0 10px 34px rgba(15, 23, 42, 0.14)",
       sep: "rgba(0, 0, 0, 0.04)", // --dsw-alias-border-l1: #0000000a
@@ -524,7 +523,6 @@
       fg: "#f9fafb", // --dsw-alias-label-primary: bluish-50
       titleFg: "#f9fafb",
       hover: "rgba(255, 255, 255, 0.08)",
-      menuBg: "#61666b", // --dsw-alias-bg-overlay: bluish-700
       menuBorder: "rgba(255, 255, 255, 0.12)", // --dsw-alias-border-l2: #ffffff1f
       menuShadow: "0 10px 34px rgba(0, 0, 0, 0.5)",
       sep: "rgba(255, 255, 255, 0.06)", // --dsw-alias-border-l1: #ffffff0f
@@ -554,7 +552,9 @@
     s.setProperty("--tb-bg", pickColor(ov.bg, p.bg));
     s.setProperty("--tb-fg", pickColor(ov.fg, p.fg));
     s.setProperty("--tb-hover", p.hover);
-    s.setProperty("--tb-menu-bg", pickColor(ov.menuBg, p.menuBg));
+    // 菜单与弹窗的背景取「窗口同色」（标题栏背景）：DSH 的 overlay token 在深色主题下
+    // 是 bluish-700 中灰，压在近黑的标题栏上突兀得很；同色后靠边框与阴影分层次。
+    s.setProperty("--tb-menu-bg", pickColor(ov.bg, p.bg));
     s.setProperty("--tb-menu-border", pickColor(ov.menuBorder, p.menuBorder));
     s.setProperty("--tb-menu-shadow", p.menuShadow);
     s.setProperty("--tb-sep", pickColor(ov.sep, p.sep));
@@ -585,10 +585,11 @@
       if (!envelopeTheme && data.__dshLauncherTheme !== 1) return;
       const theme = envelopeTheme || data;
       pluginThemeApplied = true;
+      // 注：插件仍在上报 menuBg（DSH 的 overlay token），但外壳已改用「窗口同色」，
+      // 故不再透传；协议字段保留，等大版本再清理。
       applyTitlebarTheme(theme.scheme, {
         bg: theme.bg,
         fg: theme.fg,
-        menuBg: theme.menuBg,
         menuBorder: theme.menuBorder,
         sep: theme.sep,
         danger: theme.danger,
