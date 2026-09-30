@@ -10,6 +10,44 @@
 整节中文段控制在 15 行以内；确需展开的（新功能 / 行为变化 / 升级注意）先与用户确认篇幅，
 不自行写长篇。
 
+## v1.1.0-rc.1 — 2026-09-30
+
+标题栏多了「窗口」「关于」两个菜单：一键把界面收进托盘而不退出应用，以及查看三个版本号、检查更新。
+
+**新增**
+
+- **窗口 → 关闭窗口**：主窗与设置窗一起收进托盘，Harness 继续在后台跑；托盘「打开」原样恢复，会话还在。
+- **关于 → 关于 Launcher**：启动器 / DSH / Node 三个版本号，DSH 没装就显示「未安装」。
+- **关于 → 检查更新**：查启动器（含插件，两者同号）与 DSH 两条线；有新版本时给出当前 exe 完整路径、下载页和升级命令。
+
+**变更**
+
+- 菜单与弹窗背景改为与标题栏同色（深色主题下原先是一块突兀的中灰）。
+
+**内部改进**
+
+- 标题栏菜单改为数组驱动，新增菜单不再需要改互斥逻辑。
+
+<!-- en -->
+
+### English
+
+The title bar gained two menus. "Window" collapses the UI into the tray without quitting; "About" shows the three version numbers and checks both update lines.
+
+**Added**
+
+- **Window → Close windows**: hides the main and settings windows; the harness keeps running and the tray's "Open" restores them with the session intact.
+- **About → About Launcher**: launcher / DSH / Node versions, showing "not installed" when DSH is missing.
+- **About → Check for updates**: checks the launcher (plugin included, same version) and DSH; when an update exists it shows the current exe path, the download page and the upgrade command.
+
+**Changed**
+
+- Menu and dialog backgrounds now match the title bar (the dark theme previously showed a jarring mid-grey panel).
+
+**Internal**
+
+- Title-bar menus are now array-driven, so adding one no longer touches the mutual-exclusion logic.
+
 ## v1.0.11 — 2026-09-15
 
 修好「设置里的桌面启动开关打开后桌面端起不来、关闭却一直正常」的问题：插件拉起桌面应用
