@@ -244,7 +244,11 @@ body {
   background: transparent;
 }
 
-/* 菜单（文件 / 帮助） */
+/* 菜单（文件 / 窗口 / 帮助）
+   按钮与面板按 **class** 定位（不是 id）：新增菜单只需在 index.html 给按钮加
+   `class="menu-btn"`、给面板加 `class="menu-panel"`，本文件无需任何改动。
+   漏加 class 不会报错——按钮会退回浏览器默认样式（深色标题栏上表现为一条蓝色
+   焦点环），面板同时失去背景、边框、阴影与绝对定位。 */
 
 .menu-anchor {
   position: relative;
@@ -253,9 +257,7 @@ body {
   margin-left: 6px;
 }
 
-#menu-btn,
-#window-btn,
-#help-btn {
+.menu-btn {
   height: 28px;
   padding: 0 10px;
   border: none;
@@ -267,18 +269,12 @@ body {
   cursor: default;
 }
 
-#menu-btn:hover,
-#menu-btn.open,
-#window-btn:hover,
-#window-btn.open,
-#help-btn:hover,
-#help-btn.open {
+.menu-btn:hover,
+.menu-btn.open {
   background: var(--tb-hover, rgba(17, 24, 39, 0.08));
 }
 
-#menu-panel,
-#window-panel,
-#help-panel {
+.menu-panel {
   position: absolute;
   top: 34px;
   left: 0;
