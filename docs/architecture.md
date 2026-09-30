@@ -186,10 +186,10 @@ exe 目录记入候选列表，避免探测缓存仍是旧值时漏看新实例�
 - **标题栏菜单**：文件（设置 / 重新加载页面 / 在浏览器中打开 / 退出）· 窗口（关闭窗口）·
   帮助（官网 / 文档）；「关于」菜单待 W1/W2 就位后按同一机制追加。面板与条目由
   `ui/main.js::setupMenus()` 的数组（`MENUS` / `MENU_ITEMS`）驱动互斥与绑定——
-  **新增菜单 = 一个 `.menu-anchor` + 一条 `MENUS` 数据**（CSS 需把新 id 追加进既有的
-  `#menu-btn` / `#menu-panel` 选择器组），互斥逻辑本身无需改动。「关闭窗口」走 Rust 命令
-  `hide_all_windows`（`hide()`，**不是**退出流程的 `destroy()`），恢复走托盘「打开」或
-  全局快捷键；
+  **新增菜单 = 一个 `.menu-anchor` + 一条 `MENUS` 数据**，按钮与面板按 `.menu-btn` /
+  `.menu-panel` **class** 定位（不是 id），故 `styles.css` 无需改动，互斥逻辑也无需改动。
+  「关闭窗口」走 Rust 命令 `hide_all_windows`（`hide()`，**不是**退出流程的 `destroy()`），
+  恢复走托盘「打开」或全局快捷键；
   外链 URL 表唯一维护在 Rust 侧（`EXTERNAL_LINKS`），前端只传 key（`dsl` 为本地 DSH，
   地址取自应用状态以带上 token）；
 - **窗口拖动**：`data-tauri-drag-region`；capability 必须显式包含
