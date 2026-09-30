@@ -237,7 +237,11 @@ exe 目录记入候选列表，避免探测缓存仍是旧值时漏看新实例�
    谁先注册不保证，同步读会拿到上一个主题的 token（表现为标题栏滞后一个主题）；
    另有 `body` 主题属性的 MutationObserver 兜底与同状态签名去重；
 4. 插件缺席（未安装 / 浏览器直开）时，外壳回退 `matchMedia('(prefers-color-scheme: dark)')`；
-   插件一旦上报过主题（`pluginThemeApplied`）即不再介入。
+   插件一旦上报过主题（`pluginThemeApplied`）即不再介入；
+5. **菜单与弹窗背景取「窗口同色」**（`--tb-menu-bg` = 标题栏背景），**不**取 DSH 的 overlay
+   token——后者在深色主题下是 bluish-700 中灰，压在近黑的标题栏上过于突兀（浅色下也差着一档）。
+   同色后层次由既有的边框与阴影承担。插件仍在上报 `menuBg`，外壳已不透传该字段
+   （协议字段保留，待大版本清理）。
 
 ## Windows 系统主题跟随
 
