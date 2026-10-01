@@ -2,11 +2,12 @@
 //!
 //! 设计约束（决策见 docs/roadmap.md 的 D5 / D6）：
 //! - 只查两项：① 启动器 + 插件（**同号**，合并为一次 npm 对比）② DSH 本体（独立版本号）；
-//! - 网络查询复用既有 npm 工具链（`npm view <pkg> version`），**不引入 HTTP 依赖**。
+//! - 网络查询复用既有 npm 工具链（`npm view <pkg> dist-tags --json`），**不引入 HTTP 依赖**。
 //!   外壳页的 CSP 是 `default-src 'self'`，页面无法直连 registry，必须由 Rust 侧发起；
 //! - 本地读取（当前 exe 路径、已装插件版本）不联网，任何一项失败都不影响其它项；
 //! - 与 tauri 解耦的部分（版本解析、profile 推断、文案）写成纯函数，便于单测。
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -39,6 +40,9 @@ pub struct Versions {
 pub struct UpdateItem {
     pub current: Option<String>,
     pub latest: Option<String>,
+    /// `latest` 是否严格高于 `current`（语义化比较，预发布低于同号正式版）。
+    /// `None` = 缺版本号或版本号不可解析，前端退回按字符串判断。
+    pub has_update: Option<bool>,
 }
 
 /// 「检查更新」的完整结果——D5 的「出路三件套」（exe 路径 / 下载页 / 升级命令）
@@ -79,6 +83,7 @@ pub(crate) async fn check_updates(app: AppHandle) -> UpdateReport {
     let exe_path = std::env::current_exe()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
+    let dsh_version = dsh::check().version;
     let installed = installed_plugin();
     let profile = installed
         .as_ref()
@@ -87,24 +92,29 @@ pub(crate) async fn check_updates(app: AppHandle) -> UpdateReport {
     let plugin_version = installed.map(|(_, v)| v);
 
     // 两项并行：单查约 4 秒（npm 冷启动 + registry 往返），串行会逼近超时上限。
+    // 查询按 current 是否预发布挑 tag（见 [`pick_latest`]），所以 current 必须先拿到。
     let (launcher_latest, dsh_latest) = tokio::join!(
-        npm_view_version(LAUNCHER_PACKAGE),
-        npm_view_version(dsh::DSH_PACKAGE),
+        npm_view_latest(LAUNCHER_PACKAGE, Some(&exe_version)),
+        npm_view_latest(dsh::DSH_PACKAGE, dsh_version.as_deref()),
     );
 
     let errors: Vec<String> = [&launcher_latest, &dsh_latest]
         .iter()
         .filter_map(|r| r.as_ref().err().cloned())
         .collect();
+    let launcher_latest = launcher_latest.ok();
+    let dsh_latest = dsh_latest.ok();
 
     UpdateReport {
         launcher: UpdateItem {
+            has_update: has_update(Some(&exe_version), launcher_latest.as_deref()),
             current: Some(exe_version.clone()),
-            latest: launcher_latest.ok(),
+            latest: launcher_latest,
         },
         dsh: UpdateItem {
-            current: dsh::check().version,
-            latest: dsh_latest.ok(),
+            has_update: has_update(dsh_version.as_deref(), dsh_latest.as_deref()),
+            current: dsh_version,
+            latest: dsh_latest,
         },
         exe_path,
         drift: drift_note(&exe_version, plugin_version.as_deref()),
@@ -212,22 +222,51 @@ fn drift_note(exe_version: &str, plugin_version: Option<&str>) -> Option<String>
     }
 }
 
-/// 取 `npm view <pkg> version` 的输出版本号。
-/// npm 正常时只输出一行；多行时取**最后**一行非空内容（告警可能打在 stdout 前面）。
-fn parse_npm_version(stdout: &str) -> Option<String> {
-    stdout
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .next_back()
-        .map(String::from)
+/// 解析 `npm view <pkg> dist-tags --json` 的输出为 tag → 版本表。
+/// npm 正常时只输出一块 JSON；有告警行时 JSON 仍是一整块，取首尾花括号之间解析。
+fn parse_dist_tags(stdout: &str) -> Option<BTreeMap<String, String>> {
+    let text = stdout.trim();
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    serde_json::from_str(&text[start..=end]).ok()
 }
 
-/// 查询 registry 上某个包的最新版本，带超时。
+/// 从 dist-tags 里挑出「与 current 同渠道」的最高版本。
+///
+/// - current 是预发布（含 `-`，如 `1.1.0-rc.1`）→ 在**全部** tag 里取最高：
+///   用户既然在用预发布，就该看到 `next` 通道里的新预发布。
+/// - current 是正式版 → 只看 `latest`：不把 rc 推给稳定版用户。
+/// - current 缺失或不可解析 → 同样只看 `latest`。
+///
+/// 为什么必须分渠道：rc 用户拿到的 `latest` 反而更低（1.0.11 < 1.1.0-rc.1），
+/// 旧实现按字符串比不等，会报「新版本 v1.0.11（当前 v1.1.0-rc.1）」——指向的是降级。
+fn pick_latest(tags: &BTreeMap<String, String>, current: Option<&str>) -> Option<String> {
+    let on_prerelease = current
+        .and_then(|c| semver::Version::parse(c).ok())
+        .is_some_and(|v| !v.pre.is_empty());
+
+    tags.iter()
+        .filter(|(name, _)| on_prerelease || name.as_str() == "latest")
+        .filter_map(|(_, raw)| semver::Version::parse(raw.trim()).ok())
+        .max()
+        .map(|v| v.to_string())
+}
+
+/// `latest` 是否严格高于 `current`。任一侧缺失或不可解析 → `None`（前端退回原判断）。
+fn has_update(current: Option<&str>, latest: Option<&str>) -> Option<bool> {
+    let current = semver::Version::parse(current?).ok()?;
+    let latest = semver::Version::parse(latest?).ok()?;
+    Some(latest > current)
+}
+
+/// 查询 registry 上某个包「与 current 同渠道」的最新版本，带超时。
 /// Windows 上 npm 是 `npm.cmd`，与 dsh.rs 的既有做法一致，经 `cmd /C` 调用。
-async fn npm_view_version(pkg: &str) -> Result<String, String> {
+async fn npm_view_latest(pkg: &str, current: Option<&str>) -> Result<String, String> {
     let mut cmd = tokio::process::Command::new("cmd");
-    cmd.args(["/C", "npm", "view", pkg, "version"]);
+    cmd.args(["/C", "npm", "view", pkg, "dist-tags", "--json"]);
     hide_console(&mut cmd);
 
     match tokio::time::timeout(NPM_QUERY_TIMEOUT, cmd.output()).await {
@@ -244,8 +283,13 @@ async fn npm_view_version(pkg: &str) -> Result<String, String> {
                 detail
             })
         }
-        Ok(Ok(out)) => parse_npm_version(&String::from_utf8_lossy(&out.stdout))
-            .ok_or_else(|| format!("npm 返回了无法解析的版本号：{pkg}")),
+        Ok(Ok(out)) => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let tags = parse_dist_tags(&text)
+                .ok_or_else(|| format!("npm 返回了无法解析的 dist-tags：{pkg}"))?;
+            pick_latest(&tags, current)
+                .ok_or_else(|| format!("{pkg} 的 dist-tags 里没有可用版本号"))
+        }
     }
 }
 
@@ -262,11 +306,85 @@ fn hide_console(_cmd: &mut tokio::process::Command) {}
 mod tests {
     use super::*;
 
+    /// 构造 dist-tags 表，供下面几组用例共用。
+    fn tags(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
     #[test]
-    fn parse_npm_version_takes_last_non_empty_line() {
-        assert_eq!(parse_npm_version("1.0.11\n"), Some("1.0.11".to_string()));
-        assert_eq!(parse_npm_version("\n  1.2.3  \n\n"), Some("1.2.3".to_string()));
-        assert_eq!(parse_npm_version("   "), None);
+    fn parse_dist_tags_reads_json_even_after_warning_lines() {
+        let clean = parse_dist_tags("{\n  \"latest\": \"1.0.11\",\n  \"next\": \"1.1.0-rc.1\"\n}\n")
+            .expect("正常 JSON 应可解析");
+        assert_eq!(clean.get("latest").map(String::as_str), Some("1.0.11"));
+        assert_eq!(clean.get("next").map(String::as_str), Some("1.1.0-rc.1"));
+
+        let noisy = parse_dist_tags("npm warn something\n{\"latest\":\"1.2.3\"}\n")
+            .expect("告警行在前也应可解析");
+        assert_eq!(noisy.get("latest").map(String::as_str), Some("1.2.3"));
+
+        assert!(parse_dist_tags("   ").is_none());
+        assert!(parse_dist_tags("not json").is_none());
+    }
+
+    /// 本次修复的核心用例：rc 用户的 `latest`(1.0.11) 反而更低，
+    /// 必须改看 next 通道，否则会被告知「新版本 v1.0.11」——那是降级。
+    #[test]
+    fn pick_latest_keeps_prerelease_user_on_prerelease_channel() {
+        let tags = tags(&[("latest", "1.0.11"), ("next", "1.1.0-rc.1")]);
+        assert_eq!(
+            pick_latest(&tags, Some("1.1.0-rc.1")).as_deref(),
+            Some("1.1.0-rc.1")
+        );
+    }
+
+    /// 稳定版用户不该被推 rc。
+    #[test]
+    fn pick_latest_ignores_prerelease_tags_for_stable_user() {
+        let tags = tags(&[("latest", "1.0.11"), ("next", "1.1.0-rc.1")]);
+        assert_eq!(pick_latest(&tags, Some("1.0.11")).as_deref(), Some("1.0.11"));
+        assert_eq!(pick_latest(&tags, None).as_deref(), Some("1.0.11"));
+    }
+
+    /// 预发布渠道里取最高的那个（semver 序，不是字符串序）。
+    #[test]
+    fn pick_latest_takes_highest_on_prerelease_channel() {
+        let tags = tags(&[
+            ("latest", "1.0.11"),
+            ("next", "1.1.0-rc.3"),
+            ("beta", "1.1.0-rc.2"),
+        ]);
+        assert_eq!(
+            pick_latest(&tags, Some("1.1.0-rc.1")).as_deref(),
+            Some("1.1.0-rc.3")
+        );
+    }
+
+    #[test]
+    fn pick_latest_survives_missing_or_invalid_tags() {
+        assert!(pick_latest(&BTreeMap::new(), Some("1.0.11")).is_none());
+        assert!(pick_latest(&tags(&[("latest", "not-a-version")]), Some("1.0.11")).is_none());
+        // 非法值跳过，同表里的合法值仍可用
+        let mixed = tags(&[("latest", "oops"), ("next", "1.1.0-rc.1")]);
+        assert_eq!(
+            pick_latest(&mixed, Some("1.1.0-rc.1")).as_deref(),
+            Some("1.1.0-rc.1")
+        );
+    }
+
+    #[test]
+    fn has_update_compares_semver_not_strings() {
+        // 同号正式版高于预发布——字符串比较会得出相反结论
+        assert_eq!(has_update(Some("1.1.0-rc.1"), Some("1.1.0")), Some(true));
+        assert_eq!(has_update(Some("1.1.0"), Some("1.1.0-rc.1")), Some(false));
+        assert_eq!(has_update(Some("1.0.11"), Some("1.0.11")), Some(false));
+        assert_eq!(has_update(Some("1.0.9"), Some("1.0.11")), Some(true));
+        // 任一侧缺失或不可解析 → None，前端退回原判断
+        assert_eq!(has_update(None, Some("1.0.11")), None);
+        assert_eq!(has_update(Some("1.0.11"), None), None);
+        assert_eq!(has_update(Some("1.0.11"), Some("nope")), None);
     }
 
     #[test]

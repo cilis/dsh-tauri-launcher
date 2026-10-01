@@ -680,6 +680,7 @@ dependencies = [
 name = "dsh-launcher"
 version = "1.1.0-rc.1"
 dependencies = [
+ "semver",
  "serde",
  "serde_json",
  "tauri",
