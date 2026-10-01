@@ -375,11 +375,25 @@
     }
   }
 
+  /**
+   * 单项是否「有更新」：Rust 侧已做语义化比较（预发布低于同号正式版，见 info.rs 的
+   * has_update），拿到结论就用它；结论缺失时退回按字符串判断，与旧版行为一致。
+   * current / latest 缺一即 false——「本地版本未知」不当成有更新。
+   */
+  function isOutdated(item) {
+    if (!item?.latest || !item.current) return false;
+    if (item.has_update === true) return true;
+    if (item.has_update === false) return false;
+    return item.latest !== item.current;
+  }
+
   /** 单项对比文案：本地版本一定有，远端可能是「未能获取」（离线 / 超时 / npm 缺失）。 */
   function describeUpdate(label, item) {
     const current = item?.current ? `v${item.current}` : "未知";
     if (!item?.latest) return `${label}：${current}（未能获取最新版本）`;
-    if (item.latest === item.current) return `${label}：已是最新（${current}）`;
+    // current 缺失（如 DSH 未安装）时判不出新旧，沿用旧版的「新版本」文案
+    if (!item.current) return `${label}：新版本 v${item.latest}（当前 ${current}）`;
+    if (!isOutdated(item)) return `${label}：已是最新（${current}）`;
     return `${label}：新版本 v${item.latest}（当前 ${current}）`;
   }
 
@@ -398,9 +412,7 @@
     }
 
     // 出路三件套只在真有新版本时出现：当前 exe 完整路径 + 打开下载页 + 复制升级命令
-    const hasUpdate = [report.launcher, report.dsh].some(
-      (item) => item?.latest && item.current && item.latest !== item.current,
-    );
+    const hasUpdate = [report.launcher, report.dsh].some((item) => isOutdated(item));
     const actions = document.getElementById("about-update-actions");
     if (actions) {
       if (hasUpdate) {
