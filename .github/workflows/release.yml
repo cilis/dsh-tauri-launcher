@@ -53,6 +53,9 @@ jobs:
           # 正文由 CHANGELOG.md 生成（覆盖式写入）。不要改回
           # generate_release_notes: true —— 它只按 PR 标题罗列且重跑会追加重复块。
           body_path: ${{ runner.temp }}/release-notes.github.md
+          # 版本号里带 `-`（如 v1.1.0-rc.1）的标为预发布：GitHub 不会把它当作
+          # Latest release，rc 也就不会抢走正式版的展示位。
+          prerelease: ${{ contains(github.ref_name, '-') }}
 
       # Gitee 镜像同步只携带 git 内容，发行版（Release）需经 API 单独创建。
       # 未配置 GITEE_TOKEN 时告警跳过；Gitee API 偶发抖动，所有调用带重试，
