@@ -16,10 +16,10 @@ body {
 body {
   font-family: "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
   background:
-    radial-gradient(700px 400px at 10% -10%, #15304b 0%, transparent 60%),
-    radial-gradient(600px 380px at 110% 110%, #1c2644 0%, transparent 55%),
-    #0b0f17;
-  color: #e5eaf2;
+    radial-gradient(700px 400px at 10% -10%, var(--c-bg-glow-a) 0%, transparent 60%),
+    radial-gradient(600px 380px at 110% 110%, var(--c-bg-glow-b) 0%, transparent 55%),
+    var(--c-bg);
+  color: var(--c-fg);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
@@ -63,7 +63,7 @@ h1 {
 
 .desc {
   font-size: 12px;
-  color: #8ea0b8;
+  color: var(--c-fg-muted);
   line-height: 1.6;
 }
 
@@ -108,13 +108,13 @@ kbd {
   width: 18px;
   left: 3px;
   top: 3px;
-  background: #e5eaf2;
+  background: var(--c-fg);
   border-radius: 50%;
   transition: transform 0.15s ease;
 }
 
 .switch input:checked + .slider {
-  background: linear-gradient(135deg, #0ea5e9, #4f46e5);
+  background: linear-gradient(135deg, var(--c-brand-a), var(--c-brand-b));
 }
 
 .switch input:checked + .slider::before {
@@ -135,7 +135,7 @@ kbd {
 }
 
 .status.err {
-  color: #f87171;
+  color: var(--c-danger);
 }
 
 #close-btn {
