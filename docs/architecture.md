@@ -106,8 +106,13 @@ exe 目录记入候选列表，避免探测缓存仍是旧值时漏看新实例�
 
 桌面应用主窗口**不再**直接使用 tauri 资产协议（`http://tauri.localhost`），改由内置
 静态服务承载于 `http://127.0.0.1:3081`（`src-tauri/src/shell_server.rs`，编译期
-`include_str!` 内嵌 `ui/` 三文件）。
+`include_str!` 内嵌 `ui/` 四文件：index.html / main.js / styles.css / vars.css）。
 
+- **共用色板**：`ui/vars.css` 是三页共用的**静态**默认色板（`--c-*` 变量），与
+  `--tb-*`（运行时主题覆盖，main.js 按 DSH 主题写入）分工互补。三个 HTML 里它必须
+  排在各自样式表**之前**——`:root` 优先级相同、后加载的覆盖先加载的，顺序反了会把
+  页面自己的样式压掉（`shell_server.rs` 有测试钉住这条顺序）。settings / exiting 走
+  tauri 资产协议、直接读盘取它，只有外壳页需要 `/vars.css` 路由。
 - **为什么换**：新版 `dsh web` 的会话 cookie 为 `SameSite=Strict`，而 SameSite 比较
   「站点」时**忽略端口、只比主机**。`tauri.localhost` 与 DSH 的 `127.0.0.1:3080`
   跨站 → WebView2 拒收 iframe 内 token 握手 303 响应的 `Set-Cookie` → iframe 永久
