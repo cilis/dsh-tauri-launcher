@@ -22,10 +22,10 @@ body,
 body {
   font-family: "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
   background:
-    radial-gradient(1200px 700px at 15% -10%, #15304b 0%, transparent 60%),
-    radial-gradient(1000px 620px at 110% 110%, #1c2644 0%, transparent 55%),
-    #0b0f17;
-  color: #e5eaf2;
+    radial-gradient(1200px 700px at 15% -10%, var(--c-bg-glow-a) 0%, transparent 60%),
+    radial-gradient(1000px 620px at 110% 110%, var(--c-bg-glow-b) 0%, transparent 55%),
+    var(--c-bg);
+  color: var(--c-fg);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
@@ -64,7 +64,7 @@ body {
   height: 46px;
   border-radius: 50%;
   border: 3px solid rgba(96, 165, 250, 0.18);
-  border-top-color: #60a5fa;
+  border-top-color: var(--c-accent);
   animation: spin 0.9s linear infinite;
 }
 

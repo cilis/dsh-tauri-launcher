@@ -29,9 +29,12 @@ const SHELL_CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self'
 const INDEX_HTML: &str = include_str!("../../ui/index.html");
 const MAIN_JS: &str = include_str!("../../ui/main.js");
 const STYLES_CSS: &str = include_str!("../../ui/styles.css");
+/// 三页共用的静态色板。settings / exiting 走 tauri 资产协议、直接读盘取它，
+/// 只有外壳页（本服务）需要这条路由。
+const VARS_CSS: &str = include_str!("../../ui/vars.css");
 
 /// 路由：请求方法 + 路径 → (状态码, content-type, 响应体)。
-/// 只服务外壳自身需要的三个文件，其余一律 404（最小攻击面）。
+/// 只服务外壳自身需要的四个文件，其余一律 404（最小攻击面）。
 fn route(method: &str, path: &str) -> (u16, &'static str, &'static str) {
     if method != "GET" && method != "HEAD" {
         return (405, "text/plain; charset=utf-8", "method not allowed");
@@ -40,6 +43,7 @@ fn route(method: &str, path: &str) -> (u16, &'static str, &'static str) {
         "/" | "/index.html" => (200, "text/html; charset=utf-8", INDEX_HTML),
         "/main.js" => (200, "text/javascript; charset=utf-8", MAIN_JS),
         "/styles.css" => (200, "text/css; charset=utf-8", STYLES_CSS),
+        "/vars.css" => (200, "text/css; charset=utf-8", VARS_CSS),
         _ => (404, "text/plain; charset=utf-8", "not found"),
     }
 }
@@ -154,6 +158,35 @@ mod tests {
         assert_eq!(route("GET", "/../secret").0, 404);
         assert_eq!(route("POST", "/").0, 405);
         assert_eq!(route("HEAD", "/").0, 200);
+    }
+
+    /// 共用色板必须可服务：三页的底色与前景都靠它，漏了路由会静默退回无样式。
+    #[test]
+    fn route_serves_shared_palette() {
+        let (status, content_type, body) = route("GET", "/vars.css");
+        assert_eq!(status, 200);
+        assert_eq!(content_type, "text/css; charset=utf-8");
+        assert!(body.contains("--c-bg"), "色板应定义页面底色变量");
+        assert!(body.contains("--c-brand-a"), "色板应定义品牌色变量");
+    }
+
+    /// 三个页面都必须引入共用色板，且**排在各自样式表之前**——`:root` 优先级相同，
+    /// 后加载的规则覆盖先加载的，顺序反了会把页面自己的样式压掉。
+    #[test]
+    fn every_shell_page_links_shared_palette_first() {
+        for (page, own_css) in [
+            (include_str!("../../ui/index.html"), "./styles.css"),
+            (include_str!("../../ui/settings.html"), "./settings.css"),
+            (include_str!("../../ui/exiting.html"), "./exiting.css"),
+        ] {
+            let vars = page
+                .find("./vars.css")
+                .unwrap_or_else(|| panic!("引入 {own_css} 的页面未引 vars.css"));
+            let own = page
+                .find(own_css)
+                .unwrap_or_else(|| panic!("页面未引 {own_css}"));
+            assert!(vars < own, "页面把 vars.css 排在了 {own_css} 之后");
+        }
     }
 
     /// 端到端回归：真实 TCP 请求外壳页，校验状态行、CSP 与正文长度。
