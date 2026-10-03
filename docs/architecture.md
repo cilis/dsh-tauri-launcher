@@ -327,6 +327,19 @@ DSH 是 React SPA，切会话不产生浏览器历史（`history.back()` 会退�
   DSH 就会触发上面的死锁，托盘排在后面是因为「打开」要能取到主窗口。新窗口请求一律
   返回 `Deny`（不开内嵌窗口），只把 http/https 交给系统浏览器。
 
+## 系统托盘交互（2026-10-03）
+
+托盘图标（`tray.rs` 的 `build_tray`）的鼠标约定：
+
+- **左键单击 = 打开或聚焦主窗口**：`on_tray_icon_event` 取 `TrayIconEvent::Click` 且
+  `MouseButton::Left` + `MouseButtonState::Up`，与菜单「打开 DeepSeek Harness」共用
+  `open_or_focus_main`——已可见且未最小化只聚焦、最小化则还原、「关闭窗口」隐藏后
+  重新显示（窗口实例仍在，iframe 会话不重载）。
+- **菜单改右键弹**（`show_menu_on_left_click(false)`）；改之前是左键单击弹菜单。
+- **不做双击**：左键单击已经把窗口打开了，双击只会让同一次操作触发两遍——Windows 上
+  双击必先落两次单击事件，两个分支都处理等于重复调用。
+- 只认**抬起**（`MouseButtonState::Up`）：Windows 下按下与抬起各来一次事件。
+
 ## 状态模型（浏览器侧）
 
 `desktop: true | false | null`（运行中/已停止/状态未知）+ `shortcut: bool`。
