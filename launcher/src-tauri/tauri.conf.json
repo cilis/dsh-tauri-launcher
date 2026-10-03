@@ -11,6 +11,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "DeepSeek Harness",
         "url": "http://127.0.0.1:3081/index.html",
         "width": 1280,

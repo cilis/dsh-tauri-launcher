@@ -89,6 +89,18 @@ pub fn run() {
             shutdown::quit_app
         ])
         .setup(|app| {
+            let handle = app.handle().clone();
+
+            // 窗口创建顺序（两条都不能调换）：
+            // 1) 先预建设置/退出窗口（创建后隐藏）——必须在主窗口 iframe 加载 DSH
+            //    之前完成，否则主线程同步 build 第二个 webview 会死锁
+            //    （约束细节见 windows.rs 模块注释）；
+            // 2) 再建主窗口——它由 Rust 建、不是 tauri 按配置自动建，为的是能挂
+            //    on_new_window，把 DSH 页面里的外部链接交给系统浏览器
+            //    （见 windows::build_main_window 的注释）。
+            windows::prebuild_aux_windows(&handle);
+            windows::build_main_window(&handle)?;
+
             // 启动时按系统主题选择托盘/窗口图标，浅色系统用黑图标、深色系统用白图标。
             // 高分辨率图标：托盘与窗口（任务栏/标题栏）统一从 512×512 源缩放。
             let light = theme::is_light_theme();
@@ -96,20 +108,14 @@ pub fn run() {
             if let Some(w) = app.get_webview_window(windows::WINDOW_MAIN) {
                 icons::apply_window_icon(&w, &icon);
             }
-            tray::build_tray(app.handle(), icon)?;
+            tray::build_tray(&handle, icon)?;
 
             // 启动时按持久化配置恢复全局快捷键注册。
-            let handle = app.handle().clone();
             if settings::load_config().global_shortcut {
                 if let Err(e) = settings::apply_global_shortcut(&handle, true) {
                     eprintln!("[launcher] 注册全局快捷键失败：{e}");
                 }
             }
-
-            // 预建设置/退出窗口（创建后隐藏）：必须在主窗口 iframe 加载 DSH
-            // 之前完成，否则主线程同步 build 第二个 webview 会死锁
-            // （约束细节见 windows.rs 模块注释）。
-            windows::prebuild_aux_windows(&handle);
 
             // 标记文件轮询：心跳 + 响应“仅退出桌面应用”请求。
             markers::spawn_marker_task(handle.clone());
@@ -146,6 +152,28 @@ mod tests {
             json["identifier"].as_str(),
             Some(super::APP_USER_MODEL_ID),
             "tauri.conf.json 的 identifier 与 APP_USER_MODEL_ID 不一致"
+        );
+    }
+
+    /// 主窗口必须 `create: false`：tauri 因此不自动建它，改由
+    /// `windows::build_main_window` 用 `from_config` 建、并在建的时候挂
+    /// `on_new_window`（把 DSH 页面里的外部链接交给系统浏览器）。
+    /// 谁把这一行删了，外部链接会静默退回「点了没反应」，所以钉住。
+    #[test]
+    fn main_window_is_built_manually() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tauri.conf.json");
+        let text = std::fs::read_to_string(path).expect("读取 tauri.conf.json");
+        let json: serde_json::Value = serde_json::from_str(&text).expect("解析 tauri.conf.json");
+        let main = json["app"]["windows"]
+            .as_array()
+            .expect("app.windows 应为数组")
+            .iter()
+            .find(|w| w["label"] == "main")
+            .expect("tauri.conf.json 缺少 main 窗口配置");
+        assert_eq!(
+            main["create"].as_bool(),
+            Some(false),
+            "main 窗口必须 create: false，否则 tauri 自动建它、挂不上 on_new_window"
         );
     }
 }
