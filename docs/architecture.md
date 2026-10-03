@@ -317,6 +317,15 @@ DSH 是 React SPA，切会话不产生浏览器历史（`history.back()` 会退�
   `exiting.css`，不依赖外壳样式表；
 - 退出动画期间先 `destroy()` 主窗口与设置窗口（`close()` 会被「隐藏到托盘」拦截），
   再显示进度窗口；清理（taskkill 等）放到后台任务，避免阻塞 UI 导致动画白屏。
+- **主窗口同样由 Rust 建，且必须排在预建之后**（2026-10-02）：`tauri.conf.json` 的
+  main 配置是 `create: false`，tauri 不自动建它，改由 `windows::build_main_window`
+  用 `from_config` 读同一份配置建——**为的是能挂 `on_new_window`**。WebView2 默认吞掉
+  新窗口请求，没有 handler 时 DSH 页面里 `target="_blank"` 与 `window.open` 全都没
+  反应；而 handler 只能在建窗口那一刻挂，配置自动建的窗口挂不上。窗口属性仍全部读
+  同一份配置，视觉与尺寸行为不变。`setup()` 的顺序是 `prebuild_aux_windows` →
+  `build_main_window` → 图标 / 托盘：辅助窗口排在前面是因为主窗口一旦开始加载跨源
+  DSH 就会触发上面的死锁，托盘排在后面是因为「打开」要能取到主窗口。新窗口请求一律
+  返回 `Deny`（不开内嵌窗口），只把 http/https 交给系统浏览器。
 
 ## 状态模型（浏览器侧）
 
