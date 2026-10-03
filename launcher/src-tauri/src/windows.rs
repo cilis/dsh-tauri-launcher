@@ -123,6 +123,47 @@ pub(crate) fn prebuild_aux_windows(app: &AppHandle) {
     }
 }
 
+/// 创建主窗口（外壳页 + 标题栏）。
+///
+/// **为什么由 Rust 建、不让 tauri 按配置自动建**：`tauri.conf.json` 的 main 配置里
+/// 写了 `create: false`，为的是能在这里挂 `on_new_window`——WebView2 默认吞掉新窗口
+/// 请求（没有 handler 时 DSH 里 `target="_blank"` 与 `window.open` 全都没反应），
+/// 而 handler 只能在建窗口那一刻挂，配置自动建的窗口挂不上。窗口属性仍全部读同一份
+/// 配置（`from_config`），视觉与尺寸行为不变。
+///
+/// **调用顺序**：必须在 [`prebuild_aux_windows`] **之后**——主窗口一旦开始加载跨源
+/// DSH，主线程再同步 build 其它 webview 会死锁（见模块注释）。
+pub(crate) fn build_main_window(app: &AppHandle) -> tauri::Result<()> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == WINDOW_MAIN)
+        .cloned()
+        .ok_or(tauri::Error::WindowNotFound)?;
+
+    let _built = WebviewWindowBuilder::from_config(app, &config)?
+        .on_new_window(|url, _features| {
+            let target = url.as_str();
+            if is_external_link(target) {
+                if let Err(e) = open_with_system_browser(target) {
+                    eprintln!("[launcher] 打开外部链接失败（{target}）：{e}");
+                }
+            }
+            // 一律不开内嵌窗口：守住「不新增 webview」这条硬约束（预建约束 + 死锁风险）
+            tauri::webview::NewWindowResponse::Deny
+        })
+        .build()?;
+    Ok(())
+}
+
+/// 新窗口请求的目标是否该交给系统浏览器——只放行 http/https，
+/// `about:blank` 之类（`window.open()` 的默认目标）直接丢弃。
+fn is_external_link(url: &str) -> bool {
+    url.starts_with("http://") || url.starts_with("https://")
+}
+
 /// 关闭（隐藏）设置窗口。窗口的 X 按钮同样触发 CloseRequested → 隐藏到托盘。
 #[tauri::command]
 pub(crate) fn close_settings(app: AppHandle) {
@@ -202,7 +243,9 @@ fn resolve_link(app: &AppHandle, key: &str) -> Result<String, String> {
 }
 
 /// 用系统默认浏览器打开 URL（经 explorer.exe，不经 cmd shell）。
-fn open_with_system_browser(url: &str) -> Result<(), String> {
+/// `pub(crate)`：除本模块的 [`open_in_browser`] 命令外，主窗口的 `on_new_window`
+/// 也用它把 DSH 页面里的外部链接交出去。
+pub(crate) fn open_with_system_browser(url: &str) -> Result<(), String> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -217,4 +260,21 @@ fn open_with_system_browser(url: &str) -> Result<(), String> {
         let _ = url;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 只有 http/https 交给系统浏览器；`window.open()` 的默认目标 `about:blank`
+    /// 与 `file:` / `javascript:` 之类一律丢弃。
+    #[test]
+    fn only_http_links_go_to_system_browser() {
+        assert!(is_external_link("https://deepseek-harness.github.io/guide"));
+        assert!(is_external_link("http://127.0.0.1:3080/"));
+        assert!(!is_external_link("about:blank"));
+        assert!(!is_external_link("file:///C:/Windows/System32/"));
+        assert!(!is_external_link("javascript:alert(1)"));
+        assert!(!is_external_link(""));
+    }
 }
