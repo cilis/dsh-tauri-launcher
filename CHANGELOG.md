@@ -10,6 +10,54 @@
 整节中文段控制在 15 行以内；确需展开的（新功能 / 行为变化 / 升级注意）先与用户确认篇幅，
 不自行写长篇。
 
+## v1.1.0 — 2026-10-03
+
+标题栏多了「窗口」「关于」两个菜单，托盘左键单击可唤出窗口，DSH 里的外部链接也能正常打开了。
+
+**新增**
+
+- **窗口 → 关闭窗口**：主窗与设置窗一起收进托盘，Harness 继续在后台跑；托盘「打开」原样恢复，会话还在。
+- **关于 → 关于 Launcher**：启动器 / DSH / Node 三个版本号，DSH 没装就显示「未安装」。
+- **关于 → 检查更新**：查启动器（含插件，两者同号）与 DSH 两条线；有新版时给出当前 exe 路径、下载页和升级命令。
+- **托盘左键单击**：打开或聚焦主窗口，与菜单「打开」同一条路径。
+
+**修复**
+
+- **DSH 里的外部链接点了没反应**：补上 `on_new_window`，http/https 交给系统默认浏览器。
+
+**变更**
+
+- 菜单与弹窗背景改为与标题栏同色；托盘菜单改右键弹出（左键让给「打开 / 聚焦」）。
+
+**内部改进**
+
+- 标题栏菜单改为数组驱动；三页共用一份静态色板。
+
+<!-- en -->
+
+### English
+
+The title bar gained two menus, a left click on the tray icon now brings the window back, and external links inside DSH finally open.
+
+**Added**
+
+- **Window → Close windows**: hides the main and settings windows; the harness keeps running and the tray's "Open" restores them with the session intact.
+- **About → About Launcher**: launcher / DSH / Node versions, showing "not installed" when DSH is missing.
+- **About → Check for updates**: checks the launcher (plugin included, same version) and DSH; when an update exists it shows the current exe path, the download page and the upgrade command.
+- **Tray left click**: opens or focuses the main window, the same path the "Open" menu item takes.
+
+**Fixed**
+
+- **External links inside DSH did nothing**: the main window now handles `on_new_window` and hands http/https to the system browser.
+
+**Changed**
+
+- Menu and dialog backgrounds now match the title bar; the tray menu moved to right click (left click now opens or focuses the window).
+
+**Internal**
+
+- Title-bar menus are now array-driven; the three pages share one static palette.
+
 ## v1.1.0-rc.1 — 2026-10-01
 
 标题栏多了「窗口」「关于」两个菜单：一键把界面收进托盘而不退出应用，以及查看三个版本号、检查更新。
