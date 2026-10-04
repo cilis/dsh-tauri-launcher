@@ -10,6 +10,24 @@
 整节中文段控制在 15 行以内；确需展开的（新功能 / 行为变化 / 升级注意）先与用户确认篇幅，
 不自行写长篇。
 
+## v1.1.1 — 2026-10-04
+
+修好「检查更新」认错版本的问题：它此前会翻遍 npm 上所有发布标签，可能把更早期的预览版当成新版本推给你。
+
+**修复**
+
+- **检查更新可能推荐更早的预览版**：改为只看 npm 的 `latest` 标签（也就是 `dsh plugin add` 不带版本号时默认安装的渠道）。DSH 官方把 `alpha` 指向 `0.2.1-alpha.1`、`latest` 指向 `0.2.0-rc.2`，旧逻辑会让装了 rc 的用户被提示升到 alpha。
+
+<!-- en -->
+
+### English
+
+Fixes a wrong-version report in "Check for updates": it used to scan every publish tag on npm and could point you at an earlier preview.
+
+**Fixed**
+
+- **Check for updates could recommend an earlier preview**: it now reads only npm's `latest` tag — the channel `dsh plugin add` installs by default. DSH publishes `alpha` as `0.2.1-alpha.1` while `latest` is `0.2.0-rc.2`, so rc users used to be pointed at an alpha build.
+
 ## v1.1.0 — 2026-10-03
 
 标题栏多了「窗口」「关于」两个菜单，托盘左键单击可唤出窗口，DSH 里的外部链接也能正常打开了。
