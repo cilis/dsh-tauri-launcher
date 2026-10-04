@@ -7,8 +7,6 @@
 //! 循环停摆）。因此 settings/exiting 两个辅助窗口必须在启动早期预建
 //! （`visible(false)` 防闪现），之后一律复用实例；退出路径绝不做现建兜底。
 
-use std::process::Command as StdCommand;
-
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::dsh;
@@ -242,18 +240,40 @@ fn resolve_link(app: &AppHandle, key: &str) -> Result<String, String> {
         .ok_or_else(|| format!("未知的外链标识：{key}"))
 }
 
-/// 用系统默认浏览器打开 URL（经 explorer.exe，不经 cmd shell）。
+/// 用系统默认程序打开 URL。
+///
+/// **为什么用 `ShellExecuteW` 而不是 `explorer.exe`**：explorer 会把带查询串的地址当成
+/// 本地路径解析——实测 `explorer "http://127.0.0.1:3080/"` 能进浏览器，而带进程 token 的
+/// `http://127.0.0.1:3080/?token=xxx` 会打开文件资源管理器（DSH 新版地址正是后者，所以
+/// 「文件 → 在浏览器中打开」会开出资源管理器）。`ShellExecuteW` 是 Windows 官方的
+/// 「用默认程序打开」入口，不经过任何 shell 解析，两种形式都稳定。
+///
 /// `pub(crate)`：除本模块的 [`open_in_browser`] 命令外，主窗口的 `on_new_window`
 /// 也用它把 DSH 页面里的外部链接交出去。
 pub(crate) fn open_with_system_browser(url: &str) -> Result<(), String> {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        StdCommand::new("explorer")
-            .arg(url)
-            .creation_flags(0x0800_0000)
-            .spawn()
-            .map_err(|e| format!("调用系统浏览器失败：{e}"))?;
+        use ::windows::core::PCWSTR;
+        use ::windows::Win32::UI::Shell::ShellExecuteW;
+        use ::windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        let verb: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
+        let file: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
+        let result = unsafe {
+            ShellExecuteW(
+                None,
+                PCWSTR(verb.as_ptr()),
+                PCWSTR(file.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        // 返回值语义是 HINSTANCE：按文档 ≤ 32 表示失败（借用了旧的错误码约定）
+        let code = result.0 as isize;
+        if code <= 32 {
+            return Err(format!("调用系统浏览器失败（ShellExecuteW 返回 {code}）"));
+        }
     }
     #[cfg(not(windows))]
     {
