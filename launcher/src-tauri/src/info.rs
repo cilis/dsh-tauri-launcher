@@ -92,10 +92,9 @@ pub(crate) async fn check_updates(app: AppHandle) -> UpdateReport {
     let plugin_version = installed.map(|(_, v)| v);
 
     // 两项并行：单查约 4 秒（npm 冷启动 + registry 往返），串行会逼近超时上限。
-    // 查询按 current 是否预发布挑 tag（见 [`pick_latest`]），所以 current 必须先拿到。
     let (launcher_latest, dsh_latest) = tokio::join!(
-        npm_view_latest(LAUNCHER_PACKAGE, Some(&exe_version)),
-        npm_view_latest(dsh::DSH_PACKAGE, dsh_version.as_deref()),
+        npm_view_latest(LAUNCHER_PACKAGE),
+        npm_view_latest(dsh::DSH_PACKAGE),
     );
 
     let errors: Vec<String> = [&launcher_latest, &dsh_latest]
@@ -234,24 +233,17 @@ fn parse_dist_tags(stdout: &str) -> Option<BTreeMap<String, String>> {
     serde_json::from_str(&text[start..=end]).ok()
 }
 
-/// 从 dist-tags 里挑出「与 current 同渠道」的最高版本。
+/// 从 dist-tags 里挑出 `latest` 指向的版本。
 ///
-/// - current 是预发布（含 `-`，如 `1.1.0-rc.1`）→ 在**全部** tag 里取最高：
-///   用户既然在用预发布，就该看到 `next` 通道里的新预发布。
-/// - current 是正式版 → 只看 `latest`：不把 rc 推给稳定版用户。
-/// - current 缺失或不可解析 → 同样只看 `latest`。
+/// **只看 `latest`**：那是用户默认安装（`dsh plugin add` 不带版本号）拿到的渠道。
+/// 不认 `next` / `alpha` / `beta`——它们指向更早的预览，推给用户等于让人主动换到更不稳的
+/// 版本（实测 DSH 官方把 `latest` 指向 `0.2.0-rc.2`、`alpha` 指向 `0.2.1-alpha.1`，
+/// 早先「current 是预发布就全 tag 取最高」的写法会把 alpha 推给 rc 用户）。
 ///
-/// 为什么必须分渠道：rc 用户拿到的 `latest` 反而更低（1.0.11 < 1.1.0-rc.1），
-/// 旧实现按字符串比不等，会报「新版本 v1.0.11（当前 v1.1.0-rc.1）」——指向的是降级。
-fn pick_latest(tags: &BTreeMap<String, String>, current: Option<&str>) -> Option<String> {
-    let on_prerelease = current
-        .and_then(|c| semver::Version::parse(c).ok())
-        .is_some_and(|v| !v.pre.is_empty());
-
-    tags.iter()
-        .filter(|(name, _)| on_prerelease || name.as_str() == "latest")
-        .filter_map(|(_, raw)| semver::Version::parse(raw.trim()).ok())
-        .max()
+/// 值不可解析（或没有 `latest`）→ `None`，由调用方给出「无法解析」。
+fn latest_version(tags: &BTreeMap<String, String>) -> Option<String> {
+    tags.get("latest")
+        .and_then(|raw| semver::Version::parse(raw.trim()).ok())
         .map(|v| v.to_string())
 }
 
@@ -262,9 +254,9 @@ fn has_update(current: Option<&str>, latest: Option<&str>) -> Option<bool> {
     Some(latest > current)
 }
 
-/// 查询 registry 上某个包「与 current 同渠道」的最新版本，带超时。
+/// 查询 registry 上某个包 `latest` 标签指向的版本，带超时。
 /// Windows 上 npm 是 `npm.cmd`，与 dsh.rs 的既有做法一致，经 `cmd /C` 调用。
-async fn npm_view_latest(pkg: &str, current: Option<&str>) -> Result<String, String> {
+async fn npm_view_latest(pkg: &str) -> Result<String, String> {
     let mut cmd = tokio::process::Command::new("cmd");
     cmd.args(["/C", "npm", "view", pkg, "dist-tags", "--json"]);
     hide_console(&mut cmd);
@@ -287,8 +279,8 @@ async fn npm_view_latest(pkg: &str, current: Option<&str>) -> Result<String, Str
             let text = String::from_utf8_lossy(&out.stdout);
             let tags = parse_dist_tags(&text)
                 .ok_or_else(|| format!("npm 返回了无法解析的 dist-tags：{pkg}"))?;
-            pick_latest(&tags, current)
-                .ok_or_else(|| format!("{pkg} 的 dist-tags 里没有可用版本号"))
+            latest_version(&tags)
+                .ok_or_else(|| format!("{pkg} 的 dist-tags 里没有可用的 latest 版本号"))
         }
     }
 }
@@ -329,49 +321,36 @@ mod tests {
         assert!(parse_dist_tags("not json").is_none());
     }
 
-    /// 本次修复的核心用例：rc 用户的 `latest`(1.0.11) 反而更低，
-    /// 必须改看 next 通道，否则会被告知「新版本 v1.0.11」——那是降级。
+    /// 本次修复的核心用例：rc 用户的 `latest` 更高（1.1.0 > 1.1.0-rc.1），
+    /// 应被提示升到正式版——旧实现按字符串比不等，会报「新版本 v1.0.11」，指向的是降级。
     #[test]
-    fn pick_latest_keeps_prerelease_user_on_prerelease_channel() {
-        let tags = tags(&[("latest", "1.0.11"), ("next", "1.1.0-rc.1")]);
-        assert_eq!(
-            pick_latest(&tags, Some("1.1.0-rc.1")).as_deref(),
-            Some("1.1.0-rc.1")
-        );
+    fn latest_version_reads_the_latest_tag() {
+        let tags = tags(&[("latest", "1.1.0"), ("next", "1.1.0-rc.1")]);
+        assert_eq!(latest_version(&tags).as_deref(), Some("1.1.0"));
     }
 
-    /// 稳定版用户不该被推 rc。
+    /// **只认 `latest`**：next / alpha / beta 都指向更早的预览，不该推给用户。
+    /// 实测 DSH 官方是 `latest`=0.2.0-rc.2、`alpha`=0.2.1-alpha.1——按「全 tag 取最高」
+    /// 会把 alpha 推给 rc 用户，等于让人主动换到更不稳的版本。
     #[test]
-    fn pick_latest_ignores_prerelease_tags_for_stable_user() {
-        let tags = tags(&[("latest", "1.0.11"), ("next", "1.1.0-rc.1")]);
-        assert_eq!(pick_latest(&tags, Some("1.0.11")).as_deref(), Some("1.0.11"));
-        assert_eq!(pick_latest(&tags, None).as_deref(), Some("1.0.11"));
-    }
-
-    /// 预发布渠道里取最高的那个（semver 序，不是字符串序）。
-    #[test]
-    fn pick_latest_takes_highest_on_prerelease_channel() {
-        let tags = tags(&[
-            ("latest", "1.0.11"),
-            ("next", "1.1.0-rc.3"),
-            ("beta", "1.1.0-rc.2"),
+    fn latest_version_ignores_other_channels() {
+        let dsh = tags(&[
+            ("alpha", "0.2.1-alpha.1"),
+            ("next", "0.2.0-rc.2"),
+            ("latest", "0.2.0-rc.2"),
         ]);
-        assert_eq!(
-            pick_latest(&tags, Some("1.1.0-rc.1")).as_deref(),
-            Some("1.1.0-rc.3")
-        );
+        assert_eq!(latest_version(&dsh).as_deref(), Some("0.2.0-rc.2"));
+
+        // 别的 tag 版本更高也不看
+        let higher_elsewhere = tags(&[("latest", "1.0.11"), ("next", "1.1.0-rc.3")]);
+        assert_eq!(latest_version(&higher_elsewhere).as_deref(), Some("1.0.11"));
     }
 
     #[test]
-    fn pick_latest_survives_missing_or_invalid_tags() {
-        assert!(pick_latest(&BTreeMap::new(), Some("1.0.11")).is_none());
-        assert!(pick_latest(&tags(&[("latest", "not-a-version")]), Some("1.0.11")).is_none());
-        // 非法值跳过，同表里的合法值仍可用
-        let mixed = tags(&[("latest", "oops"), ("next", "1.1.0-rc.1")]);
-        assert_eq!(
-            pick_latest(&mixed, Some("1.1.0-rc.1")).as_deref(),
-            Some("1.1.0-rc.1")
-        );
+    fn latest_version_survives_missing_or_invalid_tags() {
+        assert!(latest_version(&BTreeMap::new()).is_none());
+        assert!(latest_version(&tags(&[("next", "1.1.0-rc.1")])).is_none());
+        assert!(latest_version(&tags(&[("latest", "not-a-version")])).is_none());
     }
 
     #[test]
