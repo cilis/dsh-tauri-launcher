@@ -214,11 +214,13 @@ exe 目录记入候选列表，避免探测缓存仍是旧值时漏看新实例�
   - 查询复用既有 npm 工具链（`npm view <pkg> dist-tags --json`，Windows 上经 `cmd /C`），
     **不引入 HTTP 依赖**——外壳页的 CSP 是 `default-src 'self'`，页面无法直连 registry，
     必须由 Rust 发起；
-  - **按渠道挑 tag + semver 比较**（`pick_latest` / `has_update`）：dist-tags 里的 `latest` 未必
-    是最高版本——rc 用户的 `latest`(1.0.11) 反而低于 current(1.1.0-rc.1)。所以 current 是预发布时
-    在**全部** tag 里取最高（能看到 `next` 通道的新预发布），是正式版时只看 `latest`（不把 rc 推给
-    稳定版用户）；比较用 `semver`——预发布低于同号正式版，字符串比较会得出相反结论。
-    `UpdateItem.has_update` 把结论带给前端，缺失时前端退回字符串判断（旧版行为）；
+  - **只看 `latest` + semver 比较**（`latest_version` / `has_update`）：`latest` 正是
+    `dsh plugin add` 不带版本号时拿到的渠道，也就是用户默认安装的那一版；`next` / `alpha` /
+    `beta` 指向更早的预览，一律不认（实测 DSH 官方是 `latest`=0.2.0-rc.2、`alpha`=
+    0.2.1-alpha.1，按「全 tag 取最高」会把 alpha 推给 rc 用户）。比较用 `semver`——预发布
+    低于同号正式版，字符串比较会得出相反结论（旧实现曾因此把 rc 用户报成「有新版本
+    v1.0.11」，那其实是降级）。`UpdateItem.has_update` 把结论带给前端，缺失时前端退回
+    字符串判断（旧版行为）；
   - 超时 **8 秒**（本机实测单次约 3.7 秒），失败给明确原因（超时 / npm 缺失 / registry 报错），
     不长时间转圈；
   - 真有新版本时才给出**出路三件套**：**当前正在运行的 exe 完整路径**（`current_exe()`，
