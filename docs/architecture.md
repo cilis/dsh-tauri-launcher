@@ -196,7 +196,10 @@ exe 目录记入候选列表，避免探测缓存仍是旧值时漏看新实例�
   「关闭窗口」走 Rust 命令 `hide_all_windows`（`hide()`，**不是**退出流程的 `destroy()`），
   恢复走托盘「打开」或全局快捷键；
   外链 URL 表唯一维护在 Rust 侧（`EXTERNAL_LINKS`），前端只传 key（`dsl` 为本地 DSH，
-  地址取自应用状态以带上 token；`releases` 为启动器下载页）；
+  地址取自应用状态以带上 token；`releases` 为启动器下载页）；实际打开统一走
+  `windows::open_with_system_browser` 里的 `ShellExecuteW`——**不要换回 `explorer.exe`**：
+  它会把带查询串的地址当成本地路径，`http://127.0.0.1:3080/?token=xxx` 会开出文件资源
+  管理器（2026-10-05 实测：裸地址进浏览器、带 token 的进资源管理器）；
 - **窗口拖动**：`data-tauri-drag-region`；capability 必须显式包含
   `core:window:allow-start-dragging`（`core:window:default` 不含，缺失时拖动被静默拒绝）。
 
