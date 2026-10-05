@@ -134,6 +134,27 @@ release-notes → Run workflow 手动触发，填单个 tag（如 `v1.0.8`）或
 发版顺序：先 `docs:` 提交补 `CHANGELOG.md` 小节 → 再 `chore:` 版本同步提交 →
 `git tag vX.Y.Z && git push origin vX.Y.Z`。
 
+### 一键发版脚本（`launcher/release.ps1`）
+
+上面这套动作由脚本串起来（roadmap v1.2 · W9），分两段跑：
+
+```powershell
+pwsh -File launcher/release.ps1 -Version 1.2.0 -DryRun    # 干跑：只做只读检查，不改任何东西
+pwsh -File launcher/release.ps1 -Version 1.2.0            # 第一段：切分支 + 提交 + 推送，给出 PR 链接
+pwsh -File launcher/release.ps1 -Version 1.2.0 -TagOnly   # 第二段：PR 合并后在 main 上打 tag
+```
+
+脚本按序做七件事：校验 `CHANGELOG.md` 小节 → 检查 `dsh-launcher` 未在运行（运行中会锁住 exe）→
+`build.ps1 -Bump` 同步三处版本号并重建 → 复制产物到 `launcher/bin` → 核验三处版本号与 exe 的
+PE 版本资源 → 分 `docs:` / `chore:` 两次提交 → 推送分支并打印 PR 链接。
+
+分两段是因为 `main` 有分支保护：脚本不代替人工开 PR、不代替合并；tag 只从 `main` 打，所以合并后
+回 `main` 再跑 `-TagOnly`。`npm publish` 不在脚本范围内（账号 2FA）。
+
+常用开关：`-DryRun`（干跑，全部就绪退出码 0、有未就绪项退出码 1）、`-SkipBuild`（复用 CI 产物，
+要求三处版本号已同步）、`-NoPush`（只做本地提交）、`-Offline -CargoHome <路径>`（本机离线构建，
+透传 `build.ps1`）。
+
 ### GitHub Release（自动）
 
 推送 `v*` tag 即触发 `.github/workflows/release.yml`：windows-latest 上
