@@ -10,6 +10,24 @@
 整节中文段控制在 15 行以内；确需展开的（新功能 / 行为变化 / 升级注意）先与用户确认篇幅，
 不自行写长篇。
 
+## v1.1.2 — 2026-10-05
+
+修好「文件 → 在浏览器中打开」实际打开文件资源管理器的问题。
+
+**修复**
+
+- **「在浏览器中打开」打开了文件资源管理器**：改用系统的默认程序接口（`ShellExecuteW`），不再经 `explorer.exe`——它会把带查询串的地址当成路径，而新版 DSH 的地址带着进程 token（`...?token=xxx`），于是被当路径打开了。
+
+<!-- en -->
+
+### English
+
+Fixes "Open in browser" opening File Explorer instead of the browser.
+
+**Fixed**
+
+- **"Open in browser" opened File Explorer instead**: the URL is now handed to the system default-program API (`ShellExecuteW`) instead of going through `explorer.exe`, which treats an address with a query string as a local path — and the newer DSH address carries a process token (`...?token=xxx`).
+
 ## v1.1.1 — 2026-10-04
 
 修好「检查更新」认错版本的问题：它此前会翻遍 npm 上所有发布标签，可能把更早期的预览版当成新版本推给你。
