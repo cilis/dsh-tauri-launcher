@@ -348,14 +348,15 @@ function Assert-VersionConsistency([string]$Expected, [switch]$CheckExe) {
 }
 
 function Test-TagAbsent {
-    if ($DryRun) {
-        Write-Note "[dry-run] 将检查 tag 是否存在：$tag"
-        return $true
-    }
+    # 本地检查只读、不联网，干跑也做（能提前发现「tag 已存在」这类冲突）
     $local = @(Invoke-Git @('tag', '--list', $tag))
     if (@($local | Where-Object { $_ -ne '' }).Count -gt 0) {
         Fail "本地已存在 tag $tag。要重发同一版本需先删除该 tag（本地与远端都要）。"
         return $false
+    }
+    if ($DryRun) {
+        Write-Note "[dry-run] 本地无 tag $tag（远端需联网比对，正式执行时进行）。"
+        return $true
     }
     $remote = Invoke-GitSoft @('ls-remote', '--tags', 'origin', "refs/tags/$tag")
     if ($remote.Ok -and @($remote.Lines | Where-Object { $_ -ne '' }).Count -gt 0) {
@@ -378,7 +379,7 @@ if ($Version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$') {
 Write-Host ''
 Write-Host "dsh-tauri-launcher 发版 → $tag" -ForegroundColor Cyan
 if ($TagOnly) { Write-Host '   第二段：打 tag 并推送' -ForegroundColor DarkGray }
-elseif ($DryRun) { Write-Host '   干跑：只做只读检查，不写文件、不提交、不推送' -ForegroundColor DarkGray }
+elseif ($DryRun) { Write-Host '   干跑：不构建、不复制、不提交、不打 tag、不推送' -ForegroundColor DarkGray }
 
 if (-not (Test-Path -LiteralPath (Join-Path $repoRoot '.github\scripts\release-notes.ps1'))) {
     Fail "找不到 .github\scripts\release-notes.ps1——本脚本需放在 launcher/ 下运行（当前推断的仓库根：$repoRoot）。"
