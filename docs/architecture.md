@@ -345,6 +345,41 @@ DSH 是 React SPA，切会话不产生浏览器历史（`history.back()` 会退�
   双击必先落两次单击事件，两个分支都处理等于重复调用。
 - 只认**抬起**（`MouseButtonState::Up`）：Windows 下按下与抬起各来一次事件。
 
+## 日志落盘与设置窗日志页（2026-10-06）
+
+接官方 `tauri-plugin-log`（不是自研 writer）：轮转、归档保留、本地时区、fern 格式化
+都由它提供；各处诊断输出改用 `log` 宏后同时进 stdout 与文件。
+
+- **落点**：`%LOCALAPPDATA%\dsh-launcher\logs\launcher.log`。用 `TargetKind::Folder`
+  精确指定目录——不用插件的 `LogDir`（那是 `%LOCALAPPDATA%\<bundleIdentifier>\logs`）。
+- **轮转**：插件按**单文件大小**轮转（`max_file_size` 设为 5 MB），归档名
+  `launcher_YYYY-MM-DD_HH-MM-SS.log`，`RotationStrategy::KeepSome(5)` 保留最近 5 个。
+  它**没有按天切割**——roadmap §4.1 里「按天 + 大小」的写法据此修正；定位某天的日志
+  看归档名即可。
+- **开关**：插件的 targets 在启动时固定、运行时无法增删（全局 logger 也只能设置
+  一次），所以「写入日志文件」开关做成文件目标上的过滤条件（读 `logging::ENABLED`），
+  切换后下一条日志即生效，**不需要重启**。
+- **不可写降级（重要）**：插件 setup 里对 `Folder` 目标会先 `create_dir_all` 再打开
+  文件，任一步失败都返回 `Err`，而插件 setup 失败会让 tauri 的 `build()` 直接失败、
+  应用起不来。所以挂文件目标**之前**先用 `logging::is_writable()` 探测（建目录 + 写
+  探测文件），不可写就不挂文件目标、只保留 stdout。
+- **token 脱敏**：新版 `dsh web` 会向 stdout 打印带进程 token 的 URL，该 token 每次
+  启动都换、对排障无用，落进文件再被贴进 issue 等于外泄；因此日志泵
+  （`harness::spawn_log_pump`）写日志前统一过 `sanitize_token()`。内存环形缓冲
+  （`AppState::log_tail`，256 行）**保持原文**——它承载「启动失败/超时把最近日志随
+  错误信息返回外壳」这条当场排障路径，两份记录分工不同。
+- **依赖代价**：新增 `tauri-plugin-log` 与 `fern`，本机 `.cargo` 离线缓存原本没有，
+  首次构建需要联网拉一次（`cargo fetch`，可走 127.0.0.1:7890 代理），之后 `-Offline`
+  照旧。cargo 实际解析到 2.9.2（2.10.0 因依赖约束未被选中），MSRV 1.77.2，当前工具链
+  1.91.1 无压力。
+- **设置窗日志页**：开关 + 目录 + 当前文件大小/归档数 + 「打开日志目录」。目录与体量由
+  `get_log_info` 给出，打开走 `open_log_dir`（复用 `open_with_system_browser`，不新增
+  打开方式）。窗口高度随之由 540 调到 624——设置窗 `resizable(false)`，加内容必须同步
+  改 `windows.rs` 的 `inner_size`。
+- **ACL 自动化**：`lib.rs` 的 `every_command_is_authorized_in_acl` 把「Rust 声明的命令
+  都在 `permissions/launcher.toml` 授权」钉住，替代原先手工跑的审计脚本（漏授权**不
+  编译报错**，只在运行时以 `Command X not allowed by ACL` 被拒）。
+
 ## 状态模型（浏览器侧）
 
 `desktop: true | false | null`（运行中/已停止/状态未知）+ `shortcut: bool`。
