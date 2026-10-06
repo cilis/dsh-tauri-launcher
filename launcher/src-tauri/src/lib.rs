@@ -6,6 +6,7 @@
 //! - [`windows`]  — 窗口 label 常量、settings/exiting 窗口预建与显示、窗口相关命令
 //! - [`settings`] — LauncherConfig 持久化、开机自启、全局快捷键、桌面快捷方式
 //! - [`harness`]  — dsh 子进程托管状态与启动/停止/日志
+//! - [`logging`]  — 日志落盘（tauri-plugin-log 装配、开关、token 脱敏）
 //! - [`shutdown`] — 退出流程（终止/孤儿化 + 退出进度编排）
 //! - [`markers`]  — 心跳/退出标记文件轮询
 //! - [`theme`]    — 系统主题检测、图标刷新与事件广播
@@ -16,6 +17,7 @@ mod dsh;
 mod harness;
 mod icons;
 mod info;
+mod logging;
 mod markers;
 mod settings;
 mod shell_server;
@@ -49,7 +51,7 @@ fn set_app_user_model_id() {
     let wide: Vec<u16> = APP_USER_MODEL_ID.encode_utf16().chain(std::iter::once(0)).collect();
     let hr = unsafe { SetCurrentProcessExplicitAppUserModelID(PCWSTR(wide.as_ptr())) };
     if hr.is_err() {
-        eprintln!("[launcher] 设置 AppUserModelID 失败：{hr:?}");
+        log::warn!("设置 AppUserModelID 失败：{hr:?}");
     }
 }
 
@@ -66,8 +68,13 @@ pub fn run() {
     #[cfg(windows)]
     set_app_user_model_id();
 
+    // 日志开关：配置默认开启。插件的 targets 在启动时固定、运行时无法增删，所以
+    // 开关是文件目标上的过滤条件（见 logging::plugin），设置窗切换后立即生效。
+    logging::set_enabled(settings::load_config().logging_enabled);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(logging::plugin())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             harness::check_dsh,
@@ -77,11 +84,14 @@ pub fn run() {
             harness::stop_dsh,
             info::get_versions,
             info::check_updates,
+            logging::get_log_info,
+            logging::open_log_dir,
             settings::get_settings,
             settings::set_autostart_setting,
             settings::set_global_shortcut_setting,
             settings::set_desktop_shortcut_setting,
             settings::set_terminate_harness_on_exit_setting,
+            settings::set_logging_enabled_setting,
             windows::close_settings,
             windows::open_settings_window,
             windows::hide_all_windows,
@@ -113,7 +123,7 @@ pub fn run() {
             // 启动时按持久化配置恢复全局快捷键注册。
             if settings::load_config().global_shortcut {
                 if let Err(e) = settings::apply_global_shortcut(&handle, true) {
-                    eprintln!("[launcher] 注册全局快捷键失败：{e}");
+                    log::warn!("注册全局快捷键失败：{e}");
                 }
             }
 
@@ -121,6 +131,8 @@ pub fn run() {
             markers::spawn_marker_task(handle.clone());
             // 系统主题轮询：图标刷新 + 事件广播（独立于心跳任务）。
             theme::spawn_theme_watch(handle);
+            // 一次启动的锚点：日志文件里看到这一行，说明本次启动走完了全部装配。
+            log::info!("启动器就绪（日志目录：{}）", logging::log_dir().display());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -174,6 +186,64 @@ mod tests {
             main["create"].as_bool(),
             Some(false),
             "main 窗口必须 create: false，否则 tauri 自动建它、挂不上 on_new_window"
+        );
+    }
+
+    /// 每个 `#[tauri::command]` 都必须在 `permissions/launcher.toml` 里授权——外壳页是
+    /// 远程 origin，漏授权**不会编译报错**，只在运行时以 `Command X not allowed by ACL`
+    /// 被静默拒绝（曾经踩过）。这里把两侧对齐做成测试，省掉每次手工跑审计脚本。
+    #[test]
+    fn every_command_is_authorized_in_acl() {
+        let src_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
+        let mut declared: Vec<String> = Vec::new();
+        for entry in std::fs::read_dir(src_dir).expect("读取 src 目录") {
+            let path = entry.expect("遍历 src 目录").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("读取源文件");
+            // 只看测试模块之前的部分：本测试要匹配的 `#[tauri::command]` 字面量
+            // 本身就写在测试模块里，不截掉会把自己当成命令声明扫进来。
+            let text = match text.find("#[cfg(test)]") {
+                Some(pos) => &text[..pos],
+                None => text.as_str(),
+            };
+            for block in text.split("#[tauri::command]").skip(1) {
+                // 命令名是紧随其后的第一个 `fn <name>`（属性之后到函数体之间可能夹着
+                // pub(crate)/async 等修饰符）
+                if let Some(rest) = block.split("fn ").nth(1) {
+                    let name: String = rest
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect();
+                    if !name.is_empty() {
+                        declared.push(name);
+                    }
+                }
+            }
+        }
+        declared.sort();
+        declared.dedup();
+
+        let acl_path = concat!(env!("CARGO_MANIFEST_DIR"), "/permissions/launcher.toml");
+        let acl = std::fs::read_to_string(acl_path).expect("读取 permissions/launcher.toml");
+        let block = acl
+            .split("commands.allow")
+            .nth(1)
+            .and_then(|rest| rest.split('[').nth(1))
+            .and_then(|rest| rest.split(']').next())
+            .expect("permissions/launcher.toml 缺少 commands.allow 列表");
+        let allowed: Vec<String> = block
+            .split('"')
+            .skip(1)
+            .step_by(2)
+            .map(|s| s.to_string())
+            .collect();
+
+        let missing: Vec<&String> = declared.iter().filter(|c| !allowed.contains(c)).collect();
+        assert!(
+            missing.is_empty(),
+            "以下命令已在 Rust 声明但未在 permissions/launcher.toml 授权：{missing:?}"
         );
     }
 }

@@ -39,7 +39,7 @@ fn kill_dsh_port_owner() {
 }
 
 /// 退出时对 Harness 的处置方式（由 `.dsh-config.json` 的设置决定）。
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum ExitMode {
     /// 保留：放弃托管，Harness 作为孤儿继续运行（默认）。
     Keep,
@@ -75,6 +75,8 @@ fn dispose_harness(app: &AppHandle, mode: ExitMode) {
 /// 最终清理入口（同步）：按当前设置处置托管的 Harness。
 /// 供 `RunEvent::Exit` 与 [`begin_exit`] 的后台任务调用；非异步上下文安全。
 pub(crate) fn exit_launcher(app: &AppHandle) {
+    // 与启动时的「启动器就绪」配对：日志文件里这一次运行的首尾都在。
+    log::info!("退出流程：最终清理（Harness 处置：{:?}）", ExitMode::from_config());
     dispose_harness(app, ExitMode::from_config());
 }
 
@@ -83,6 +85,7 @@ pub(crate) fn exit_launcher(app: &AppHandle) {
 /// 退出决策只读一次设置，并把模式传给最终清理（避免重复读盘解析）。
 pub(crate) fn begin_exit(app: &AppHandle) {
     let mode = ExitMode::from_config();
+    log::info!("退出流程开始（Harness 处置：{mode:?}）");
     if mode == ExitMode::Keep {
         // 保留 Harness：退出很快，同样走后台任务，避免在异步上下文
         // （标记轮询）内同步执行退出清理。

@@ -138,6 +138,38 @@ kbd {
   color: var(--c-danger);
 }
 
+/* 日志位置：路径很长，允许任意处断行，避免撑破固定宽度的窗口 */
+.log-path {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+#open-log-btn {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  border: 1px solid rgba(148, 180, 220, 0.28);
+  border-radius: 7px;
+  background: transparent;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+#open-log-btn:hover {
+  background: rgba(148, 180, 220, 0.12);
+  border-color: rgba(148, 180, 220, 0.45);
+}
+
+#open-log-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 #close-btn {
   display: block;
   margin: 6px auto 0;

@@ -15,6 +15,12 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-global-shortcut = "2"
+# 日志落盘（roadmap v1.2 W10）：官方插件提供 log facade 与按大小轮转的文件 target。
+# 首次构建需要联网拉取 tauri-plugin-log 与 fern（本机离线缓存里没有）。
+tauri-plugin-log = "2"
+# log facade：各处诊断输出改用 log::warn!/error!，由插件统一送往 stdout 与日志文件。
+# 版本已在 Cargo.lock 的传递依赖里，不引入新下载。
+log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # 更新检查的版本比较：需要区分正式版与预发布（1.1.0-rc.1 < 1.1.0），字符串比较做不到

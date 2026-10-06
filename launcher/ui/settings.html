@@ -65,6 +65,28 @@
         </label>
       </section>
 
+      <section class="row">
+        <div class="info">
+          <div class="label">写入日志文件</div>
+          <div class="desc">
+            把启动过程与 DeepSeek Harness 的输出写入日志文件，报障时便于取证
+          </div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="toggle-logging" />
+          <span class="slider"></span>
+        </label>
+      </section>
+
+      <section class="row">
+        <div class="info">
+          <div class="label">日志位置</div>
+          <div class="desc log-path" id="log-path">读取中…</div>
+          <div class="desc" id="log-meta"></div>
+        </div>
+        <button id="open-log-btn" type="button">打开目录</button>
+      </section>
+
       <p class="status" id="status"></p>
 
       <button id="close-btn">关闭</button>

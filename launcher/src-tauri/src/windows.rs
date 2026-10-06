@@ -31,7 +31,7 @@ pub(crate) const WINDOW_LABELS: [&str; 3] = [WINDOW_MAIN, WINDOW_SETTINGS, WINDO
 fn create_settings_window(app: &AppHandle) -> tauri::Result<()> {
     let built = WebviewWindowBuilder::new(app, WINDOW_SETTINGS, WebviewUrl::App("settings.html".into()))
         .title("设置")
-        .inner_size(420.0, 540.0)
+        .inner_size(420.0, 624.0)
         .resizable(false)
         .maximizable(false)
         .minimizable(false)
@@ -94,7 +94,7 @@ pub(crate) fn show_exit_progress(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(WINDOW_EXITING) {
         let _ = w.show();
     } else {
-        eprintln!("[launcher] 退出进度窗口未预建，跳过动画直接退出");
+        log::warn!("退出进度窗口未预建，跳过动画直接退出");
     }
 }
 
@@ -114,10 +114,10 @@ pub(crate) fn close_visible_windows(app: &AppHandle) {
 /// 预建失败仅日志，不中断启动：设置/退出动画缺失是可接受的降级。
 pub(crate) fn prebuild_aux_windows(app: &AppHandle) {
     if let Err(e) = create_settings_window(app) {
-        eprintln!("[launcher] 预建设置窗口失败：{e}");
+        log::warn!("预建设置窗口失败：{e}");
     }
     if let Err(e) = create_exit_progress_window(app) {
-        eprintln!("[launcher] 预建退出进度窗口失败：{e}");
+        log::warn!("预建退出进度窗口失败：{e}");
     }
 }
 
@@ -146,7 +146,7 @@ pub(crate) fn build_main_window(app: &AppHandle) -> tauri::Result<()> {
             let target = url.as_str();
             if is_external_link(target) {
                 if let Err(e) = open_with_system_browser(target) {
-                    eprintln!("[launcher] 打开外部链接失败（{target}）：{e}");
+                    log::warn!("打开外部链接失败（{target}）：{e}");
                 }
             }
             // 一律不开内嵌窗口：守住「不新增 webview」这条硬约束（预建约束 + 死锁风险）
@@ -190,7 +190,7 @@ pub(crate) fn hide_all_windows(app: AppHandle) {
 #[tauri::command]
 pub(crate) fn open_settings_window(app: AppHandle) {
     if let Err(e) = show_settings(&app) {
-        eprintln!("[launcher] 打开设置窗口失败：{e}");
+        log::warn!("打开设置窗口失败：{e}");
     }
 }
 

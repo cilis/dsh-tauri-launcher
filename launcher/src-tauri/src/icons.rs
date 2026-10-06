@@ -49,7 +49,7 @@ fn set_taskbar_icon_big(window: &tauri::WebviewWindow, img: &tauri::image::Image
     let (width, height) = (img.width(), img.height());
     let pixel_count = width as usize * height as usize;
     if rgba.len() != pixel_count * 4 {
-        eprintln!("[launcher] 任务栏大图标像素数据长度异常，跳过");
+        log::warn!("任务栏大图标像素数据长度异常，跳过");
         return;
     }
     let mut bgra = rgba.to_vec();
@@ -79,11 +79,11 @@ fn set_taskbar_icon_big(window: &tauri::WebviewWindow, img: &tauri::image::Image
                     SetClassLongPtrW(hwnd, GCLP_HICONSM, hicon.0 as isize);
                     let last_error = windows::Win32::Foundation::GetLastError();
                     if last_error.0 != 0 {
-                        eprintln!("[launcher] 更新窗口类图标槽失败（GetLastError={}）", last_error.0);
+                        log::warn!("更新窗口类图标槽失败（GetLastError={}）", last_error.0);
                     }
                 }
             }
         }
-        Err(e) => eprintln!("[launcher] 创建任务栏大图标失败：{e}"),
+        Err(e) => log::warn!("创建任务栏大图标失败：{e}"),
     }
 }
