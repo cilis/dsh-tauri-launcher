@@ -62,7 +62,7 @@ pub(crate) fn apply_theme_icons(app: &AppHandle, light: bool) {
     let img = icons::icon_for_theme(light);
     if let Some(tray) = app.tray_by_id(crate::tray::TRAY_ID) {
         if let Err(e) = tray.set_icon(Some(img.clone())) {
-            eprintln!("[launcher] 切换托盘图标失败：{e}");
+            log::warn!("切换托盘图标失败：{e}");
         }
     }
     for label in WINDOW_LABELS {

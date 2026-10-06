@@ -109,12 +109,12 @@ pub fn start() {
     let listener = match std::net::TcpListener::bind(("127.0.0.1", SHELL_PORT)) {
         Ok(listener) => listener,
         Err(e) => {
-            eprintln!("[launcher] 外壳服务无法绑定 127.0.0.1:{SHELL_PORT}：{e}");
+            log::error!("外壳服务无法绑定 127.0.0.1:{SHELL_PORT}：{e}");
             return;
         }
     };
     if let Err(e) = listener.set_nonblocking(true) {
-        eprintln!("[launcher] 外壳服务设置非阻塞失败：{e}");
+        log::error!("外壳服务设置非阻塞失败：{e}");
         return;
     }
     let _ = std::thread::Builder::new()
@@ -123,7 +123,7 @@ pub fn start() {
             let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
                 Ok(runtime) => runtime,
                 Err(e) => {
-                    eprintln!("[launcher] 外壳服务运行时创建失败：{e}");
+                    log::error!("外壳服务运行时创建失败：{e}");
                     return;
                 }
             };
@@ -131,10 +131,10 @@ pub fn start() {
                 match TcpListener::from_std(listener) {
                     Ok(listener) => {
                         if let Err(e) = serve(listener).await {
-                            eprintln!("[launcher] 外壳服务异常退出：{e}");
+                            log::error!("外壳服务异常退出：{e}");
                         }
                     }
-                    Err(e) => eprintln!("[launcher] 外壳服务接管监听失败：{e}"),
+                    Err(e) => log::error!("外壳服务接管监听失败：{e}"),
                 }
             });
         });

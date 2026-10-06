@@ -22,15 +22,36 @@ const HOTKEY: &str = "ctrl+shift+h";
 /// 桌面快捷方式文件名（状态即 .lnk 存在性）。
 const SHORTCUT_NAME: &str = "DeepSeek Harness.lnk";
 
+/// 日志落盘开关的默认值：默认开启——报障时要拿得到现场；介意磁盘占用的用户
+/// 可在设置窗关闭（见 `logging::set_enabled`）。
+fn default_logging_enabled() -> bool {
+    true
+}
+
 /// 桌面应用自身的持久化设置（与 exe 同目录的 `.dsh-config.json`）。
 /// 开机启动以注册表为准，无需在此持久化；全局快捷键的勾选状态在此保存。
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize)]
 pub(crate) struct LauncherConfig {
     #[serde(default)]
     pub global_shortcut: bool,
     /// 退出时是否一并结束 DeepSeek Harness 进程（默认 false：只退出启动器）。
     #[serde(default)]
     pub terminate_harness_on_exit: bool,
+    /// 是否把日志写入 `%LOCALAPPDATA%\dsh-launcher\logs\`（默认开启）。
+    #[serde(default = "default_logging_enabled")]
+    pub logging_enabled: bool,
+}
+
+/// 手写 Default：`logging_enabled` 的默认值是 true，而 derive 会给 false——
+/// 那会让「首次运行」与「配置读取失败」两种情况都悄悄变成不落盘。
+impl Default for LauncherConfig {
+    fn default() -> Self {
+        Self {
+            global_shortcut: false,
+            terminate_harness_on_exit: false,
+            logging_enabled: default_logging_enabled(),
+        }
+    }
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -111,8 +132,8 @@ fn set_autostart(enabled: bool) -> bool {
         // 「开关拨了没生效」这类问题原先完全没有日志（优化报告 v2 C6）。
         match res {
             Ok(status) if status.success() => {}
-            Ok(status) => eprintln!("[launcher] 设置开机自启失败（reg 退出码 {:?}）", status.code()),
-            Err(e) => eprintln!("[launcher] 无法执行 reg 命令：{e}"),
+            Ok(status) => log::warn!("设置开机自启失败（reg 退出码 {:?}）", status.code()),
+            Err(e) => log::warn!("无法执行 reg 命令：{e}"),
         }
     }
     autostart_enabled() == enabled
@@ -230,8 +251,8 @@ fn set_desktop_shortcut(enabled: bool) -> bool {
         // 同上：以 .lnk 终态为准，但 PowerShell 失败要留痕（v2 C6）。
         match res {
             Ok(status) if status.success() => {}
-            Ok(status) => eprintln!("[launcher] 创建桌面快捷方式失败（PowerShell 退出码 {:?}）", status.code()),
-            Err(e) => eprintln!("[launcher] 无法执行 PowerShell：{e}"),
+            Ok(status) => log::warn!("创建桌面快捷方式失败（PowerShell 退出码 {:?}）", status.code()),
+            Err(e) => log::warn!("无法执行 PowerShell：{e}"),
         }
     }
     desktop_shortcut_exists() == enabled
@@ -244,6 +265,7 @@ pub struct SettingsSnapshot {
     pub global_shortcut: bool,
     pub desktop_shortcut: bool,
     pub terminate_harness_on_exit: bool,
+    pub logging_enabled: bool,
     pub hotkey: String,
 }
 
@@ -256,6 +278,7 @@ pub(crate) fn get_settings() -> SettingsSnapshot {
         global_shortcut: config.global_shortcut,
         desktop_shortcut: desktop_shortcut_exists(),
         terminate_harness_on_exit: config.terminate_harness_on_exit,
+        logging_enabled: config.logging_enabled,
         hotkey: HOTKEY.to_string(),
     }
 }
@@ -292,5 +315,17 @@ pub(crate) fn set_terminate_harness_on_exit_setting(enabled: bool) -> Result<(),
     let mut config = load_config();
     config.terminate_harness_on_exit = enabled;
     save_config(&config);
+    Ok(())
+}
+
+/// 日志落盘开关：先落配置、再切运行时标志。
+/// 插件在启动时固定 targets，开关靠文件 target 上的过滤条件生效
+/// （见 `logging::plugin`），因此切换**不需要重启应用**。
+#[tauri::command]
+pub(crate) fn set_logging_enabled_setting(enabled: bool) -> Result<(), String> {
+    let mut config = load_config();
+    config.logging_enabled = enabled;
+    save_config(&config);
+    crate::logging::set_enabled(enabled);
     Ok(())
 }

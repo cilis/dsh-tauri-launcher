@@ -49,7 +49,7 @@ pub(crate) fn build_tray(app: &AppHandle, icon: tauri::image::Image<'static>) ->
             MENU_SHOW => open_or_focus_main(app),
             MENU_SETTINGS => {
                 if let Err(e) = windows::show_settings(app) {
-                    eprintln!("[launcher] 打开设置窗口失败：{e}");
+                    log::warn!("打开设置窗口失败：{e}");
                 }
             }
             MENU_QUIT => {

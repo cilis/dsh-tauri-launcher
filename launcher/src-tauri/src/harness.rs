@@ -65,16 +65,16 @@ impl OwnedChild {
                     .status();
                 match res {
                     Ok(status) if status.success() => {}
-                    Ok(status) => eprintln!("[launcher] taskkill 退出码 {:?}", status.code()),
-                    Err(e) => eprintln!("[launcher] 无法执行 taskkill：{e}"),
+                    Ok(status) => log::warn!("taskkill 退出码 {:?}", status.code()),
+                    Err(e) => log::warn!("无法执行 taskkill：{e}"),
                 }
             }
             #[cfg(not(windows))]
             {
                 match StdCommand::new("kill").args(["-9", &pid.to_string()]).status() {
                     Ok(status) if status.success() => {}
-                    Ok(status) => eprintln!("[launcher] kill 退出码 {:?}", status.code()),
-                    Err(e) => eprintln!("[launcher] 无法执行 kill：{e}"),
+                    Ok(status) => log::warn!("kill 退出码 {:?}", status.code()),
+                    Err(e) => log::warn!("无法执行 kill：{e}"),
                 }
             }
         }
@@ -178,9 +178,13 @@ fn tail_text(state: &AppState) -> String {
         .unwrap_or_default()
 }
 
-/// 日志泵：把子进程输出流逐行写入共享环形缓冲（上限 256 行，超出丢最旧）。
+/// 日志泵：把子进程输出流逐行写入共享环形缓冲（上限 256 行，超出丢最旧）**并落盘**。
 /// stdout/stderr 共用同一实现，仅 tag 不同；`on_line` 在入队前收到原始行，
 /// 供调用方做内容匹配（如捕获 `dsh web:` 启动 URL 行）。
+///
+/// 两份记录的内容有意不同：内存缓冲保留**原文**（启动失败/超时要把最近日志随错误
+/// 信息返回外壳，那是当场排障用的）；落盘那份对 `token=` 打码——该 token 每次启动
+/// 都换、对事后排障无用，留在文件里被贴到 issue 时反而是外泄。
 fn spawn_log_pump<R, F>(reader: R, tag: &'static str, tail: Arc<Mutex<VecDeque<String>>>, on_line: F)
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
@@ -196,6 +200,8 @@ where
                 }
                 q.push_back(format!("[{tag}] {line}"));
             }
+            // target 固定为 "dsh"：日志文件里一眼能分辨哪些行来自子进程。
+            log::info!(target: "dsh", "[{tag}] {}", crate::logging::sanitize_token(&line));
         }
     });
 }
