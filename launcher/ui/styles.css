@@ -532,7 +532,8 @@ body {
 
 #about-check,
 #about-download,
-#about-copy {
+#about-copy,
+#about-upgrade-dsh {
   height: 28px;
   padding: 0 12px;
   border: 1px solid var(--tb-menu-border, rgba(0, 0, 0, 0.12));
@@ -546,17 +547,51 @@ body {
 
 #about-check:hover,
 #about-download:hover,
-#about-copy:hover {
+#about-copy:hover,
+#about-upgrade-dsh:hover {
   background: var(--tb-hover, rgba(17, 24, 39, 0.08));
 }
 
-#about-check:disabled {
+#about-check:disabled,
+#about-upgrade-dsh:disabled {
   opacity: 0.55;
 }
 
 #about-check-status {
   font-size: 12px;
   opacity: 0.75;
+}
+
+/* DSH 一键升级（W15）：入口按钮 + 行内状态 + 可滚动的进度日志 */
+#about-dsh-upgrade {
+  margin-top: 6px;
+}
+
+#about-dsh-upgrade .about-buttons {
+  margin-top: 0;
+}
+
+#about-upgrade-status {
+  font-size: 12px;
+  opacity: 0.75;
+  align-self: center;
+  word-break: break-all;
+}
+
+#about-upgrade-log {
+  margin-top: 8px;
+  max-height: 132px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--tb-menu-border, rgba(0, 0, 0, 0.12));
+  border-radius: 7px;
+  background: var(--tb-hover, rgba(17, 24, 39, 0.06));
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  opacity: 0.85;
 }
 
 #about-update-result {

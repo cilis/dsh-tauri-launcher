@@ -174,6 +174,15 @@
           <div id="about-update-result" class="hidden">
             <p id="about-update-launcher"></p>
             <p id="about-update-dsh"></p>
+            <!-- DSH 一键升级（W15）：只在检测到 DSH 有新版时出现；
+                 点击是两步确认（按钮先变成「确认升级」，再点才执行）。 -->
+            <div id="about-dsh-upgrade" class="hidden">
+              <div class="about-buttons">
+                <button id="about-upgrade-dsh">升级 DSH</button>
+                <span id="about-upgrade-status"></span>
+              </div>
+              <pre id="about-upgrade-log" class="hidden"></pre>
+            </div>
             <p id="about-update-drift" class="hidden"></p>
             <div id="about-update-actions" class="hidden">
               <p id="about-exe-path"></p>
