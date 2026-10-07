@@ -337,11 +337,28 @@
   /** 最近一次检查更新的结果（「复制升级命令」取文本用）。 */
   let aboutReport = null;
 
+  /** DSH 一键升级的两步确认开关（点一次进入「确认」态，再点才执行）。 */
+  let confirmArmed = false;
+
+  /** 升级进度日志（只保留最后几行，避免刷屏）。 */
+  let upgradeLogLines = [];
+
   /** 重置更新区到初始态：每次打开弹窗都重新检查，不展示上一次的陈旧结果。 */
   function resetUpdateArea() {
     aboutReport = null;
+    confirmArmed = false;
+    upgradeLogLines = [];
+    const upgradeBtn = document.getElementById("about-upgrade-dsh");
+    if (upgradeBtn) upgradeBtn.textContent = "升级 DSH";
+    const log = document.getElementById("about-upgrade-log");
+    if (log) {
+      log.textContent = "";
+      log.classList.add("hidden");
+    }
     setText("about-check-status", "");
+    setText("about-upgrade-status", "");
     document.getElementById("about-update-result")?.classList.add("hidden");
+    document.getElementById("about-dsh-upgrade")?.classList.add("hidden");
     document.getElementById("about-update-drift")?.classList.add("hidden");
     document.getElementById("about-update-actions")?.classList.add("hidden");
   }
@@ -409,6 +426,13 @@
       } else {
         drift.classList.add("hidden");
       }
+    }
+
+    // DSH 一键升级入口只在 DSH 自己有新版时出现（升的是 DSH 本体，与启动器那条线独立）
+    const dshUpgrade = document.getElementById("about-dsh-upgrade");
+    if (dshUpgrade) {
+      if (isOutdated(report.dsh)) dshUpgrade.classList.remove("hidden");
+      else dshUpgrade.classList.add("hidden");
     }
 
     // 出路三件套只在真有新版本时出现：当前 exe 完整路径 + 打开下载页 + 复制升级命令
@@ -481,6 +505,113 @@
     }
   }
 
+  /* ---------- DSH 一键升级（W15） ---------- */
+
+  /**
+   * 订阅 npm 安装输出（Rust 侧 install_dsh 逐行 emit），返回退订函数。
+   * 事件 API 缺失或订阅失败时退化为「没有进度日志」——升级本身照常进行。
+   */
+  async function listenInstallOutput(onLine) {
+    const event = window.__TAURI__?.event;
+    if (!event?.listen) return () => {};
+    try {
+      const unlisten = await event.listen("install-output", (e) => {
+        const payload = e?.payload || {};
+        const line = payload.line || "";
+        if (line) onLine(`[${payload.stream || "stdout"}] ${line}`);
+      });
+      return () => {
+        try {
+          unlisten();
+        } catch {
+          /* 退订失败无副作用 */
+        }
+      };
+    } catch (e) {
+      console.error("订阅安装输出失败", e);
+      return () => {};
+    }
+  }
+
+  /** 进度日志只留最后 8 行：npm 输出很长，弹窗不该被它撑爆。 */
+  function appendUpgradeLog(line) {
+    upgradeLogLines.push(line);
+    if (upgradeLogLines.length > 8) upgradeLogLines.shift();
+    const log = document.getElementById("about-upgrade-log");
+    if (log) {
+      log.textContent = upgradeLogLines.join("\n");
+      log.classList.remove("hidden");
+    }
+  }
+
+  /**
+   * 升级 DSH 本体：停 → 装 → 起，三步全部复用既有命令（不新增后端命令、不动 ACL）。
+   * 顺序不能反——npm 覆盖包文件时若 DSH 仍在运行，可能因文件占用而失败。
+   * 完成后用新实例的地址重新导航 iframe（与启动流程同一条 showFrame 路径）。
+   */
+  async function runDshUpgrade() {
+    const btn = document.getElementById("about-upgrade-dsh");
+    const status = document.getElementById("about-upgrade-status");
+    const before = aboutReport?.dsh?.current || "";
+
+    upgradeLogLines = [];
+    const log = document.getElementById("about-upgrade-log");
+    if (log) {
+      log.textContent = "";
+      log.classList.add("hidden");
+    }
+    if (btn) btn.disabled = true;
+    const unsubscribe = await listenInstallOutput(appendUpgradeLog);
+
+    try {
+      if (status) status.textContent = "正在停止 DeepSeek Harness…";
+      await invoke("stop_dsh");
+
+      if (status) status.textContent = "正在下载并安装…";
+      const installed = await invoke("install_dsh");
+
+      if (status) status.textContent = "正在重新启动…";
+      const info = await invoke("launch_dsh");
+      showFrame(info.url);
+
+      const from = before ? `（原 v${before}）` : "";
+      if (status) {
+        status.textContent = info.auth_uncertain
+          ? `已升级到 v${installed}${from}，但新实例无法自动鉴权——若页面提示未授权，请在提示条上点「关闭并重启」。`
+          : `已升级到 v${installed}${from}，已重新启动。`;
+      }
+      await loadVersions();
+      await runUpdateCheck();
+    } catch (e) {
+      if (status) status.textContent = `升级失败：${formatError(e)}`;
+      // 失败时把日志留在屏幕上——npm 的报错原因就在里面
+      document.getElementById("about-upgrade-log")?.classList.remove("hidden");
+    } finally {
+      unsubscribe();
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  /** 两步确认：第一次点击把按钮切成「确认升级」，再点才执行（避免误触重启）。 */
+  function onUpgradeDshClick() {
+    const btn = document.getElementById("about-upgrade-dsh");
+    if (!btn) return;
+    if (!confirmArmed) {
+      confirmArmed = true;
+      btn.textContent = "确认升级？会重启 DSH";
+      setTimeout(() => {
+        if (confirmArmed) {
+          confirmArmed = false;
+          btn.textContent = "升级 DSH";
+        }
+      }, 4000);
+      return;
+    }
+    confirmArmed = false;
+    btn.textContent = "升级 DSH";
+    void runDshUpgrade();
+  }
+
   function setupAbout() {
     document.getElementById("about-close")?.addEventListener("click", closeAbout);
     // 点遮罩关闭；点卡片内部不关
@@ -501,6 +632,9 @@
     document
       .getElementById("about-copy")
       ?.addEventListener("click", () => void copyUpgradeCommand());
+    document
+      .getElementById("about-upgrade-dsh")
+      ?.addEventListener("click", onUpgradeDshClick);
   }
 
   function setupTitlebar() {
