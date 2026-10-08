@@ -30,7 +30,16 @@
     "client": {
       "inject": [],
       "platform": "web"
+    },
+    "compatibility": {
+      "dsh": ">=0.1.5-rc.1 <0.2.0",
+      "dshReleases": {
+        "0.1.5-rc.1": "compatible"
+      }
     }
+  },
+  "engines": {
+    "node": ">=22.13.0"
   },
   "license": "MIT"
 }
