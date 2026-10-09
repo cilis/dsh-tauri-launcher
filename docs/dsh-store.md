@@ -10,8 +10,8 @@
   `github-actions[bot]` 自动创建，状态 open、零评论，标签 `author-action-required` 与 `catalog-blocked`。
   该通知按人全局去重，同一作者跨项目只主动联系一次，推修复后不会重发。
 - 条目状态：`blocked`。商城不可安装，GitHub 手动安装入口保留。
-- 已完成的修改：`9a46eeb`（`chore: manifest 补 DSH 与 Node 兼容性声明`），已合入 `main`。
-- 待办：窗口内三个 DSH 版本的 install/start/uninstall/rollback 证据，见下文「三版本验收」。
+- 已完成的修改：`9a46eeb`（`chore: manifest 补 DSH 与 Node 兼容性声明`）已合入 `main`；窗口内三个 DSH
+  版本的四项验收于 2026-10-09 完成，结果写入 `package.json` 与本文「验收结果」一节。
 
 扫描按 UTC 00:05 / 08:05 / 16:05 每八小时复检默认分支的固定 Commit，推送到 `main` 即被读取，
 不需要发版或打 tag。
@@ -68,15 +68,27 @@ grep `dshReleases` 零命中）。
 
 ```json
 "compatibility": {
-  "dsh": ">=0.1.5-rc.1 <0.2.0",
+  "dsh": "0.1.5-rc.1 || 0.2.0-rc.1 || 0.2.0-rc.2 || 0.2.1-alpha.1",
   "dshReleases": {
-    "0.1.5-rc.1": "compatible"
+    "0.1.5-rc.1": "compatible",
+    "0.2.0-rc.1": "compatible",
+    "0.2.0-rc.2": "compatible",
+    "0.2.1-alpha.1": "compatible"
+  },
+  "dshOperations": {
+    "0.2.0-rc.1": { "install": "passed", "start": "passed", "uninstall": "passed", "rollback": "passed" },
+    "0.2.0-rc.2": { "install": "passed", "start": "passed", "uninstall": "passed", "rollback": "passed" },
+    "0.2.1-alpha.1": { "install": "passed", "start": "passed", "uninstall": "passed", "rollback": "passed" }
   }
 }
 ```
 
-`0.1.5-rc.1` 的依据是本机 web profile 实际运行 `@lenorin/dsh-tauri-launcher@1.1.2`。窗口内三个版本尚未
-验证，故未声明。
+`dsh` 范围串逐个列精确版本而不写区间：semver 对预发布版本的区间匹配有坑——`>=0.1.5-rc.1 <0.2.0`
+只对 `0.1.5` 这个元组放行预发布，实际不匹配 `0.1.7-rc.x`。官方样板同样逐个 OR。
+
+`0.1.5-rc.1` 的依据是本机 web profile 实际运行 `@lenorin/dsh-tauri-launcher@1.1.2`；窗口内三个版本
+的依据是下文「验收结果」的四项实测。`0.1.5-rc.1` 未做该四项验收，故不进 `dshOperations`，缺省保持
+`unknown`。
 
 ### 版本窗口
 
@@ -107,6 +119,9 @@ grep `dshReleases` 零命中）。
 第 3、4、6、7 条无法通过 manifest 声明消除，能否从 `blocked` 转入 `user-reviewed` 取决于 DSH STORE 的
 判定，契约未给出自动路径。第 1、2 条是否已在复检中消除，需等下一次八小时扫描的 Catalog 结果确认。
 
+窗口三个版本现已各有一条精确 `compatible` 记录，满足契约对 `approved` 条目的兼容性要求；能否上架
+仍受前述结构性原因限制。
+
 ## 扫描面数据
 
 本机实测（2026-10-08），排除 `.git`、`target`、`gen`、`node_modules`：
@@ -122,24 +137,46 @@ grep `dshReleases` 零命中）。
 与 `launcher/src-tauri/gen/`，源码面本身干净。若要让扫描面完整，需要把 exe 移出 Git 仓库并改为按需
 获取，代价是失去「装完即用」，属于产品决策。
 
-## 三版本验收
+## 验收结果
 
-目标：为窗口内三个版本各取得 install/start/uninstall/rollback 四项证据，写入
-`dsh.compatibility.dshOperations`。契约明确声明不等于证据，未实测的版本不能填 `passed`。
+2026-10-09 完成。三个窗口版本各建独立临时 `DSH_HOME`，用该版本自身的 CLI 走完 install、start、
+uninstall、rollback 四步：
 
-方法：为每个版本建独立的临时 `DSH_HOME`。隔离边界与两个必须避开的点见工作区根 `AGENTS.md` 的
-「临时 `DSH_HOME` 做插件验收」条目。每个版本需要：
+| 版本 | install | start | uninstall | rollback |
+| --- | --- | --- | --- | --- |
+| `0.2.0-rc.1` | dump 1262 行，含 `desktop-launcher` | 3s 起，`/api/dsh-tauri-launcher/state` 返回 200 `ok:true` | dump 回到 1259 行，条目消失 | 卸载后正常启动，同路由返回 404 |
+| `0.2.0-rc.2` | 同上 | 同上 | 同上 | 同上 |
+| `0.2.1-alpha.1` | dump 1315 行，含 `desktop-launcher` | 3s 起，返回 200 `ok:true` | dump 回到 1312 行，条目消失 | 卸载后正常启动，返回 404 |
 
-1. 取到该版本的 dsh；
-2. 建独立临时 home；
-3. `dsh plugin --profile <名字> add <包>`；
-4. 启动实例，端口避开 3080；
-5. 卸载；
-6. 回滚验证。
+`start` 的判据是插件自己的回环路由返回 200 与 `ok:true`，而不是进程存活——后者只能证明 DSH 起来了，
+证明不了插件激活。三个版本的探测响应完全一致，其中 `exe` 字段指向临时包副本而非当前环境的 exe，
+隔离边界再次得到印证。
 
-已知注意点：本地安装路径不能含空格（DSH CLI 缺陷，见根 `AGENTS.md`）；验收过程中不要触发插件的
-「关闭桌面应用」，该动作会执行 `Stop-Process -Force` 作用于当前环境的桌面应用；联网拉取 registry 包时
-pnpm store 是否跨 home 竞争尚未验证。
+### 验证边界
+
+下列内容**未被这套验收覆盖**，不应据此推断为可用：
+
+- 浏览器半（`lib/client.js` 的设置面板 UI）：全程未开浏览器；
+- `/api/dsh-tauri-launcher/set-desktop` 与 `/set-shortcut`：故意未调用。这两个动作会真的拉起或停止
+  桌面应用，而 exe 目录探测链（运行中进程、桌面快捷方式目标）是机器级的，在临时环境里触发可能
+  反噬当前环境正在使用的桌面应用。
+
+因此本次证据覆盖「可安装、组合正确、插件激活、可干净卸载与回滚」，不覆盖「功能完整可用」。
+
+### 复现方法
+
+每个版本：取到该版本的 dsh → 建独立临时 `DSH_HOME` → 从 web 模板初始化 profile →
+`dsh plugin --profile <名字> add <包>` → 起实例 → 探测插件路由 → 卸载 → 再起一次验证回滚。
+
+三个必须注意的点：
+
+1. **profile 必须从 web 模板初始化**（`dsh <名字> --from-default-profile web --dump-config`）。
+   `dsh plugin --profile X add` 直接建出的 profile 只含 `@deepseek-ai/dsh-base`，缺
+   `@deepseek-ai/dsh-web-app`，插件会停在 `pending (waiting for service: webServer)` 不激活。
+2. 本地安装路径不能含空格，见工作区根 `AGENTS.md` 的 `dsh plugin add` 条目。
+3. 新版 `dsh web` 有 token 鉴权：先访问 stdout 打印的 `?token=` URL 拿到 cookie，才能请求 `/api/*`。
+   启动形式是 `dsh --profile <名字> --port <非 3080> --no-open`，不是 `dsh web ...`。临时 home 的
+   隔离边界与两个必避点见根 `AGENTS.md`。
 
 ## 出处
 
