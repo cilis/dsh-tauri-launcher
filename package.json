@@ -32,9 +32,17 @@
       "platform": "web"
     },
     "compatibility": {
-      "dsh": ">=0.1.5-rc.1 <0.2.0",
+      "dsh": "0.1.5-rc.1 || 0.2.0-rc.1 || 0.2.0-rc.2 || 0.2.1-alpha.1",
       "dshReleases": {
-        "0.1.5-rc.1": "compatible"
+        "0.1.5-rc.1": "compatible",
+        "0.2.0-rc.1": "compatible",
+        "0.2.0-rc.2": "compatible",
+        "0.2.1-alpha.1": "compatible"
+      },
+      "dshOperations": {
+        "0.2.0-rc.1": { "install": "passed", "start": "passed", "uninstall": "passed", "rollback": "passed" },
+        "0.2.0-rc.2": { "install": "passed", "start": "passed", "uninstall": "passed", "rollback": "passed" },
+        "0.2.1-alpha.1": { "install": "passed", "start": "passed", "uninstall": "passed", "rollback": "passed" }
       }
     }
   },
