@@ -10,6 +10,36 @@
 整节中文段控制在 15 行以内；确需展开的（新功能 / 行为变化 / 升级注意）先与用户确认篇幅，
 不自行写长篇。
 
+## v1.1.3 — 2026-10-11
+
+「关于」弹窗里的检查更新对 DSH 本体从提示变成动作，另加日志落盘。
+
+**新增**
+
+- **DSH 一键升级**：DSH 本体有新版本时「关于」弹窗给出升级入口，两步确认后按「停 → 装 → 起」执行，过程逐行显示 npm 输出。升的是 DSH 本体，与启动器自身更新互不相干。
+- **日志落盘与日志页**：桌面应用接官方 `tauri-plugin-log` 全量写盘，设置窗新增日志页，显示日志位置。
+
+**内部改进**
+
+- `package.json` 补 DSH 与 Node 兼容声明、`engines.dsh`，以及窗口内三个版本的安装/启动/卸载/回滚证据，供 DSH STORE 与插件市场读取。
+- 新增发版脚本 `launcher/release.ps1`。
+
+<!-- en -->
+
+### English
+
+"Check for updates" in the About dialog now upgrades DSH itself instead of only reporting it, plus on-disk logging.
+
+**Added**
+
+- **One-click DSH upgrade**: when a newer DSH exists, the About dialog offers an upgrade entry that runs stop → install → start after a two-step confirmation, streaming npm's output line by line. It upgrades DSH itself, independent of the launcher's own updates.
+- **On-disk logging**: the desktop app writes full logs through the official `tauri-plugin-log`, and a new page in settings shows where they live.
+
+**Internal**
+
+- `package.json` gains DSH/Node compatibility declarations, `engines.dsh`, and per-release install/start/uninstall/rollback evidence for the current window, read by DSH STORE and the plugin market.
+- Adds the `launcher/release.ps1` release script.
+
 ## v1.1.2 — 2026-10-05
 
 修好「文件 → 在浏览器中打开」实际打开文件资源管理器的问题。
