@@ -24,6 +24,9 @@
     "url": "https://github.com/cilis/dsh-tauri-launcher/issues"
   },
   "dsh": {
+    "engines": {
+      "dsh": ">=0.1.5-rc.1"
+    },
     "bundle": {
       "patch": "./cordis.patch.yml"
     },
