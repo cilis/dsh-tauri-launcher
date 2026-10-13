@@ -173,7 +173,9 @@ exe 目录记入候选列表，避免探测缓存仍是旧值时漏看新实例�
 | 退出标记新鲜窗口 | 60 秒 | `markers.rs` | `.dsh-quit` 内容 `1` 的时效 |
 | 启动等待心跳 | 20 秒 | `lib/index.js` | 拉起 exe 后的就绪窗口 |
 | 退出确认 | 12 × 500ms（≈6 秒） | `lib/index.js` | 双信号确认上限 |
-| 启动就绪等待 | 180 秒 | `harness.rs` | 等 `dsh web` 就绪 |
+| 启动就绪软超时 | 180 秒 | `harness.rs` | 到点不再当失败，只标记「较慢」并继续等 |
+| 启动就绪硬超时 | 600 秒 | `harness.rs` | 真正的失败上限（终止进程并报错） |
+| 启动进度广播周期 | 1 秒（2 × 500ms 循环） | `harness.rs` | `launch-progress` 事件节流 |
 | 接管重启端口释放等待 | 10 秒 | `harness.rs` | 终止外部实例后等端口 |
 | 外壳 ping 周期 | 3 秒 | `ui/main.js` | 导航状态自愈 |
 | 服务重试梯子 | 12 × 500ms | `lib/client.js` | theme / sessions 就绪重试 |
@@ -402,6 +404,56 @@ DSH 是 React SPA，切会话不产生浏览器历史（`history.back()` 会退�
 - **ACL 自动化**：`lib.rs` 的 `every_command_is_authorized_in_acl` 把「Rust 声明的命令
   都在 `permissions/launcher.toml` 授权」钉住，替代原先手工跑的审计脚本（漏授权**不
   编译报错**，只在运行时以 `Command X not allowed by ACL` 被拒）。
+
+## 启动等待的阶段进度与耐心线（2026-10-13）
+
+**背景**：DSH 0.2.0 起，`dsh web` 的 token URL 行（`dsh web: http://127.0.0.1:3080/?token=…`）
+改在**整棵插件树 settle + 启动审计通过之后**才打印——`dsh-web-app/lib/index.js` 的
+`announceReady` 被移进了 `loader.await()` 之后的分支（0.1.5 是启动后即打印）。
+而启动器的就绪判定要求「裸 `GET /` 返回 401 **且**已捕获该行」，于是等待时长
+完全取决于插件加载速度。
+
+**实测（2026-10-12，`dsh web --no-open --port <空闲端口>`，计时到 token URL 行出现）**：
+
+| 配置 | 端口监听 | token URL 行 |
+| --- | --- | --- |
+| 干净 `DSH_HOME`（零插件） | T+2s | T+2s |
+| 官方 base + web-app | T+2s | T+2s |
+| 用户 profile 全量 15 个 bundle | T+151s | **T+192s** |
+| 全量**减去 `dsh-purge`** | T+4s | **T+7s** |
+| 只加 `dsh-purge` | T+163s | **T+202s** |
+
+结论：慢的**全部来自第三方插件**，其中 `dsh-purge`（v1.1.67）一个就占 185 秒；
+`@linxin666/dsh-web-all`（聚合 19 个 UI 插件）只占 7 秒、`@lenorin/dsh-tauri-launcher`
+单独 4 秒。当时 180 秒超时正好卡在门外，于是「等三分钟 → 失败 → 重试再等三分钟」
+永远成功不了——这是本项要解决的核心问题。
+
+**现在的行为**（`harness.rs`）：
+
+1. **软超时 180 秒**（`LAUNCH_SOFT_TIMEOUT_SECS`）不再是死刑线：到点只在进度事件里置
+   `slow`，外壳把文案改成「启动较慢，仍在继续」并露出「打开日志目录」入口。
+2. **硬超时 600 秒**（`LAUNCH_HARD_TIMEOUT_SECS`）才是真正的失败上限。
+3. **每秒广播 `launch-progress`**（载荷 `{stage, elapsed_secs, slow}`，节流 2 × 500ms 循环）：
+   - `spawning`：刚拉起进程；
+   - `loading`：进程活着、端口未监听（插件加载中，实测最长 152 秒）；
+   - `serving`：端口已响应（401 或旧版指纹）但尚未拿到 token URL（等整棵树 settle，实测 39 秒）；
+   - `cancelled`：用户点了取消。
+4. **取消**（`cancel_launch` 命令）：只置位 `AppState.launch_cancelled`，由等待循环下一轮
+   自行 `terminate_harness` 并返回 `Err("已取消启动。")`——两条路径不同时操作子进程状态。
+   每轮启动开始时清零该标志，否则升级流程里的第二次 `launch_dsh` 会被上一轮的取消打断。
+
+**为什么 `loading` / `serving` 要分开**：这两段在实测里确实分开（152s / 39s），
+前者慢是插件加载、后者慢是等审计与 settle；对用户而言「正在加载插件」与
+「服务已就绪，正在准备界面」是不同的预期管理——前者可能还要几分钟，后者基本是收尾。
+
+**为什么等待时间无法从启动器侧缩短**：token 只经 `dsh web` 的 stdout 对外，
+启动器必须等它才能让 WebView 完成 token→cookie 握手；跳过这一行只会得到 401 白页。
+所以优化方向是「让等待可见 + 可取消 + 不把耐心当失败」，而不是取消等待。
+
+**关联**：日志落盘（W10）让「打开日志目录」在慢启动时可用；`terminate_harness_on_exit`
+默认 `false`（`ExitMode::Keep`）使 DSH 在启动器退出后作为孤儿常驻，下次启动走
+`probe_web` 接管路径、秒开——**慢只发生在冷启动**（开机后首次、DSH 崩溃后，
+或用户显式开启了「退出时结束 DeepSeek Harness 进程」）。
 
 ## 状态模型（浏览器侧）
 
