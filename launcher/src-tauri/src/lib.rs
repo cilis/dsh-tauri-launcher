@@ -82,6 +82,7 @@ pub fn run() {
             harness::launch_dsh,
             harness::restart_dsh_external,
             harness::stop_dsh,
+            harness::cancel_launch,
             info::get_versions,
             info::check_updates,
             logging::get_log_info,

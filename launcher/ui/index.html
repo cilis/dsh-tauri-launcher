@@ -67,11 +67,17 @@
           <p class="hint" id="success-hint"></p>
         </div>
 
-        <!-- 启动中 -->
+        <!-- 启动中：阶段文案与已等待秒数由 launch-progress 事件驱动。
+             慢启动（软超时后）会露出「打开日志目录」，用户也可随时取消。 -->
         <div id="phase-launching" class="phase hidden">
           <div class="spinner"></div>
-          <p class="status">正在启动…</p>
-          <p class="hint">首次启动可能需要初始化配置，请稍候</p>
+          <p class="status" id="launch-status">正在启动 DeepSeek Harness…</p>
+          <p class="hint" id="launch-hint">首次启动可能需要初始化配置，请稍候</p>
+          <p class="hint launch-elapsed" id="launch-elapsed"></p>
+          <div class="launch-actions">
+            <button id="launch-cancel" class="ghost-btn">取消</button>
+            <button id="launch-open-log" class="ghost-btn hidden">打开日志目录</button>
+          </div>
         </div>
 
         <!-- 已连接 -->
