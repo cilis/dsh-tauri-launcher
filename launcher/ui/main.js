@@ -50,6 +50,8 @@
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   let unlisten = null;
+  /** 启动进度订阅的退订函数（与安装日志分开：两者生命周期不同）。 */
+  let launchUnlisten = null;
 
   /* ---------- 标题栏与 iframe 外壳 ---------- */
 
@@ -787,6 +789,65 @@
     }
   }
 
+  function clearLaunchUnlisten() {
+    if (launchUnlisten) {
+      launchUnlisten();
+      launchUnlisten = null;
+    }
+  }
+
+  /* ---------- 启动进度（launch-progress 事件） ---------- */
+
+  /**
+   * 阶段 → 文案。后端只发阶段名，措辞留在前端，改文案不必动 Rust。
+   *
+   * 三个阶段的实测时间线（2026-10-12，慢 profile）：`loading` 最长（152 秒，
+   * 插件加载）、`serving` 次之（39 秒，等整棵插件树 settle 出 token URL）。
+   */
+  const LAUNCH_STAGE_TEXT = {
+    spawning: "正在启动 DeepSeek Harness…",
+    loading: "正在加载插件…",
+    serving: "服务已就绪，正在准备界面…",
+    cancelled: "已取消启动",
+  };
+
+  /** 秒数 → 「45 秒」/「3 分 10 秒」。 */
+  function formatElapsed(secs) {
+    const s = Math.max(0, Math.floor(Number(secs) || 0));
+    if (s < 60) return `${s} 秒`;
+    return `${Math.floor(s / 60)} 分 ${String(s % 60).padStart(2, "0")} 秒`;
+  }
+
+  /**
+   * 渲染一次启动进度：阶段文案 + 已等待时间。
+   *
+   * 超过软超时（后端置 `slow`）后额外说明「仍在继续」并露出日志入口——
+   * DSH 0.2.0 起插件多的 profile 可能要等数分钟，那是正常而非卡死。
+   */
+  function renderLaunchProgress(p) {
+    if (!p) return;
+    setText("launch-status", LAUNCH_STAGE_TEXT[p.stage] || LAUNCH_STAGE_TEXT.spawning);
+    setText(
+      "launch-elapsed",
+      p.elapsed_secs ? `已等待 ${formatElapsed(p.elapsed_secs)}` : "",
+    );
+    if (p.slow) {
+      setText(
+        "launch-hint",
+        "启动较慢，仍在继续——常见原因是第三方插件，日志里能看到加载过程",
+      );
+      document.getElementById("launch-open-log")?.classList.remove("hidden");
+    }
+  }
+
+  /** 进入启动阶段前的复位：清掉上一轮残留的计时与慢启动提示。 */
+  function resetLaunchProgress() {
+    setText("launch-status", LAUNCH_STAGE_TEXT.spawning);
+    setText("launch-hint", "首次启动可能需要初始化配置，请稍候");
+    setText("launch-elapsed", "");
+    document.getElementById("launch-open-log")?.classList.add("hidden");
+  }
+
   function appendLog(stream, line) {
     const log = document.getElementById("install-log");
     if (!log) return;
@@ -839,7 +900,15 @@
       }
 
       show("launching");
+      resetLaunchProgress();
+      // 订阅阶段进度：从「正在启动…」到拿到 URL 之间不再是黑箱。
+      // 慢启动（插件多）时用户能看到阶段在推进，也可以取消。
+      clearLaunchUnlisten();
+      launchUnlisten = await listen("launch-progress", (e) =>
+        renderLaunchProgress(e.payload),
+      );
       const info = await invoke("launch_dsh");
+      clearLaunchUnlisten();
       setText("linking-hint", `本地服务：${info.url}`);
       show("linking");
       await sleep(900);
@@ -849,7 +918,10 @@
       // 页面若加载失败会停在 401，提示条引导用户处理
       if (info.auth_uncertain) showAuthHint();
     } catch (e) {
-      showError(`操作失败：${formatError(e)}`);
+      clearLaunchUnlisten();
+      const msg = formatError(e);
+      // 用户主动取消不是错误，别用「操作失败」的措辞
+      showError(msg.includes("已取消启动") ? "已取消启动。" : `操作失败：${msg}`);
     }
   }
 
@@ -864,6 +936,14 @@
       const log = document.getElementById("install-log");
       if (log) log.innerHTML = "";
       void run();
+    });
+    // 启动等待期间的两个动作：取消（只置位标志，等待循环自行终止进程并收尾）
+    // 与打开日志目录（慢启动排障，与设置窗日志页复用同一条命令）。
+    document.getElementById("launch-cancel")?.addEventListener("click", () => {
+      void invoke("cancel_launch");
+    });
+    document.getElementById("launch-open-log")?.addEventListener("click", () => {
+      void invoke("open_log_dir");
     });
     void run();
   });

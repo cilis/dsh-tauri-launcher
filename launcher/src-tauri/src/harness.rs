@@ -4,7 +4,7 @@
 
 use std::collections::VecDeque;
 use std::process::{Command as StdCommand, Stdio};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -16,6 +16,26 @@ use crate::dsh;
 
 /// 事件名：npm 安装日志逐行广播（外壳安装页实时显示）。
 pub(crate) const EVENT_INSTALL_OUTPUT: &str = "install-output";
+
+/// 事件名：启动等待的阶段进度（外壳启动卡片实时显示阶段与已等待秒数）。
+pub(crate) const EVENT_LAUNCH_PROGRESS: &str = "launch-progress";
+
+/// 启动等待的**软超时**（耐心线）：到点不再当作异常，只把进度标记为「较慢」
+/// 并让外壳提示「仍在继续」。
+///
+/// 为什么需要：DSH 0.2.0 起 `dsh web` 的 token URL 行改在**整棵插件树 settle
+/// 之后**才打印（0.1.5 时代启动后即打印），插件多的 profile 实测要 190 秒以上
+/// （2026-10-12 实测：dsh-purge 单独就把启动从 3 秒拉到 202 秒）。旧实现在 180 秒
+/// 直接终止进程，于是「等三分钟 → 失败 → 重试再等三分钟」永远成功不了。
+const LAUNCH_SOFT_TIMEOUT_SECS: u64 = 180;
+
+/// 启动等待的**硬超时**：真正的失败上限，超过才终止进程并报错。
+/// 取 10 分钟——比实测最慢案例（约 200 秒）留足余量，又不至于挂死。
+const LAUNCH_HARD_TIMEOUT_SECS: u64 = 600;
+
+/// 进度事件节流：等待循环每 500ms 一轮，每两轮广播一次（即每秒一次）。
+/// 事件载荷很小（阶段 + 秒数），每秒一次的 IPC 开销可忽略。
+const PROGRESS_EMIT_EVERY: u32 = 2;
 
 /// 托管状态：本应用与 dsh 子进程的关系（单一锁下的三态机）。
 ///
@@ -142,6 +162,10 @@ pub struct AppState {
     pub url: Mutex<Option<String>>,
     /// 退出流程是否已开始（幂等标记，防止重复显示退出动画/重复清理）。
     pub exiting: AtomicBool,
+    /// 启动等待是否被用户取消（外壳「取消」按钮置位）。
+    /// 每次启动等待开始时清零；只由等待循环读取并自行终止进程，
+    /// 避免「取消」与循环两条路径同时操作子进程状态。
+    pub launch_cancelled: AtomicBool,
     /// 子进程最近的输出（诊断用）。
     pub log_tail: Arc<Mutex<VecDeque<String>>>,
 }
@@ -168,6 +192,43 @@ pub struct LaunchInfo {
     /// 接管的是新版实例且无法确定 WebView 是否已持有鉴权 cookie
     /// （true 时页面可能显示 401，外壳据此给出引导提示）。
     pub auth_uncertain: bool,
+}
+
+/// 启动进度载荷（事件 [`EVENT_LAUNCH_PROGRESS`]）。
+#[derive(Serialize, Clone)]
+pub struct LaunchProgress {
+    /// 阶段：`spawning`（刚拉起进程）/ `loading`（插件加载中）/ `serving`
+    /// （服务已就绪、等界面）/ `cancelled`（用户取消）。
+    pub stage: String,
+    /// 已等待秒数：由后端计算，前端直接显示，避免本地计时漂移。
+    pub elapsed_secs: u64,
+    /// 是否已超过软超时（前端据此提示「启动较慢」并露出日志入口）。
+    pub slow: bool,
+}
+
+/// 启动等待的阶段判定（纯函数，便于回归测试）。
+///
+/// 端口已有响应（401 鉴权或旧版指纹）说明 `webserver` 已绑定，此后剩下的
+/// 是等整棵插件树 settle 才会打印的 token URL 行——这两段在实测里是分开的
+/// （dsh-purge 那次：152 秒绑定、又 39 秒才出 URL），所以值得区分展示。
+fn launch_stage(probe: dsh::ProbeResult) -> &'static str {
+    match probe {
+        dsh::ProbeResult::MarkerHit | dsh::ProbeResult::AuthRequired => "serving",
+        _ => "loading",
+    }
+}
+
+/// 广播一次启动进度。`app` 为 None 时静默跳过（无 UI 的调用路径不受影响）。
+fn emit_launch_progress(app: Option<&AppHandle>, stage: &str, elapsed: Duration, slow: bool) {
+    let Some(app) = app else { return };
+    let _ = app.emit(
+        EVENT_LAUNCH_PROGRESS,
+        LaunchProgress {
+            stage: stage.to_string(),
+            elapsed_secs: elapsed.as_secs(),
+            slow,
+        },
+    );
 }
 
 fn tail_text(state: &AppState) -> String {
@@ -252,8 +313,20 @@ pub(crate) fn orphan_harness(app: &AppHandle) {
 /// 确保 DeepSeek Harness 已启动并返回可访问的 Web GUI 地址。
 /// 若默认端口上已有实例在运行则直接接管；否则拉起 `dsh web` 并等待就绪。
 #[tauri::command]
-pub(crate) async fn launch_dsh(state: State<'_, AppState>) -> Result<LaunchInfo, String> {
-    launch_dsh_inner(&state).await
+pub(crate) async fn launch_dsh(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<LaunchInfo, String> {
+    launch_dsh_inner(&state, Some(&app)).await
+}
+
+/// 取消正在进行的启动等待（外壳启动卡片上的「取消」按钮）。
+///
+/// 只置位标志：等待循环下一轮自行终止刚拉起的进程并返回 `Err`，
+/// 避免取消路径与等待循环同时操作子进程状态。
+#[tauri::command]
+pub(crate) fn cancel_launch(state: State<'_, AppState>) {
+    state.launch_cancelled.store(true, Ordering::SeqCst);
 }
 
 /// 核心实现（与 tauri 解耦）：被 [`launch_dsh`] 与 [`restart_dsh_external`] 复用。
@@ -263,7 +336,14 @@ pub(crate) async fn launch_dsh(state: State<'_, AppState>) -> Result<LaunchInfo,
 /// - 新版（token+cookie 鉴权）：裸 `GET /` 返回 401，且子进程 stdout 已打印
 ///   `dsh web: <带 token 的 URL>` 行 → 用该 URL 交给 WebView 完成握手
 ///   （303 重定向 + 签 cookie），旧版永远不满足此条件、行为不变。
-async fn launch_dsh_inner(state: &AppState) -> Result<LaunchInfo, String> {
+async fn launch_dsh_inner(
+    state: &AppState,
+    app: Option<&AppHandle>,
+) -> Result<LaunchInfo, String> {
+    // 每轮启动等待都从「未取消」开始：标志是全局的，上一轮用户点过的取消
+    // 不能污染这一轮（否则升级流程里的第二次 launch 会被瞬间取消）。
+    state.launch_cancelled.store(false, Ordering::SeqCst);
+
     // 1) 端口上已有 DeepSeek Harness 实例 → 直接接管（退出时不终止它）。
     let probe = dsh::probe_web(dsh::DSH_PORT).await;
     if probe == dsh::ProbeResult::MarkerHit || probe == dsh::ProbeResult::AuthRequired {
@@ -325,10 +405,21 @@ async fn launch_dsh_inner(state: &AppState) -> Result<LaunchInfo, String> {
 
     state.proc_guard().own(child, pid);
 
-    // 3) 等待 Web GUI 就绪（首次启动可能需要初始化，留足超时）。
-    let deadline = Instant::now() + Duration::from_secs(180);
+    // 3) 等待 Web GUI 就绪，并每秒广播一次阶段进度（外壳据此显示活状态）。
+    //
+    //    实测有两条可分辨的时间线（2026-10-12，慢 profile）：端口先绑定
+    //    （`serving`），之后还要等整棵插件树 settle 才打印 token URL 行——
+    //    分别是 152 秒与 39 秒。因此 180 秒不再是死刑线，到点只标记 `slow`；
+    //    真正的失败上限见 [`LAUNCH_HARD_TIMEOUT_SECS`]。
+    let started = Instant::now();
+    let soft = Duration::from_secs(LAUNCH_SOFT_TIMEOUT_SECS);
+    let hard = Duration::from_secs(LAUNCH_HARD_TIMEOUT_SECS);
+    let mut tick: u32 = 0;
+    emit_launch_progress(app, "spawning", Duration::ZERO, false);
+
     loop {
-        let ready_url = match dsh::probe_web(dsh::DSH_PORT).await {
+        let probe = dsh::probe_web(dsh::DSH_PORT).await;
+        let ready_url = match probe {
             dsh::ProbeResult::MarkerHit => Some(dsh::DSH_URL.to_string()),
             // 401 证明新版服务已就绪；只有同时捕获到 token URL 才算可用。
             dsh::ProbeResult::AuthRequired => captured.lock().ok().and_then(|slot| slot.clone()),
@@ -343,6 +434,15 @@ async fn launch_dsh_inner(state: &AppState) -> Result<LaunchInfo, String> {
                 auth_uncertain: false,
             });
         }
+
+        // 用户取消：只在这里处理（标志由 `cancel_launch` 置位），避免取消路径
+        // 与等待循环同时操作子进程状态。
+        if state.launch_cancelled.load(Ordering::SeqCst) {
+            terminate_harness(&state);
+            emit_launch_progress(app, "cancelled", started.elapsed(), false);
+            return Err("已取消启动。".to_string());
+        }
+
         let exited = state.proc_guard().try_wait();
         if let Some(status) = exited {
             let reason = tail_text(&state);
@@ -355,10 +455,22 @@ async fn launch_dsh_inner(state: &AppState) -> Result<LaunchInfo, String> {
                 "DeepSeek Harness 进程提前退出（{status}）{hint}\n{reason}"
             ));
         }
-        if Instant::now() >= deadline {
+
+        let elapsed = started.elapsed();
+        if elapsed >= hard {
             terminate_harness(&state);
-            return Err(format!("启动超时（180 秒）：\n{}", tail_text(&state)));
+            return Err(format!(
+                "启动超时（{} 秒）：\n{}",
+                hard.as_secs(),
+                tail_text(&state)
+            ));
         }
+
+        tick = tick.wrapping_add(1);
+        if tick % PROGRESS_EMIT_EVERY == 0 {
+            emit_launch_progress(app, launch_stage(probe), elapsed, elapsed >= soft);
+        }
+
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }
@@ -369,7 +481,10 @@ async fn launch_dsh_inner(state: &AppState) -> Result<LaunchInfo, String> {
 /// 仅用于"接管了非本应用启动的实例、但 WebView 无鉴权 cookie、页面停在
 /// 401"的场景；由外壳提示条上的「关闭并重启」按钮显式触发（用户确认后）。
 #[tauri::command]
-pub(crate) async fn restart_dsh_external(state: State<'_, AppState>) -> Result<LaunchInfo, String> {
+pub(crate) async fn restart_dsh_external(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<LaunchInfo, String> {
     if state.proc_guard().is_owned() {
         return Err("当前实例由本启动器托管，无需重启接管。".to_string());
     }
@@ -390,5 +505,42 @@ pub(crate) async fn restart_dsh_external(state: State<'_, AppState>) -> Result<L
             return Err("端口 3080 上的外部实例未能及时退出，请手动关闭后重试。".to_string());
         }
     }
-    launch_dsh_inner(&state).await
+    launch_dsh_inner(&state, Some(&app)).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 阶段判定：端口无响应 → `loading`；已有响应（新版 401 或旧版指纹）→
+    /// `serving`。实测这两段分开约 39 秒（152s 绑定 / 191s 出 URL），
+    /// 外壳据此显示不同文案，所以映射关系值得钉住。
+    #[test]
+    fn launch_stage_maps_probe_results() {
+        assert_eq!(launch_stage(dsh::ProbeResult::NoResponse), "loading");
+        assert_eq!(launch_stage(dsh::ProbeResult::Other), "loading");
+        assert_eq!(launch_stage(dsh::ProbeResult::AuthRequired), "serving");
+        assert_eq!(launch_stage(dsh::ProbeResult::MarkerHit), "serving");
+    }
+
+    /// 软超时是「耐心线」而非「死刑线」：它必须低于硬超时（留出继续等待的
+    /// 余地），又不低于实测最慢案例的量级（dsh-purge 那次 202 秒）——否则正常
+    /// 的慢启动会被误标成异常。
+    #[test]
+    fn soft_timeout_is_patient_but_below_hard_timeout() {
+        assert!(
+            LAUNCH_SOFT_TIMEOUT_SECS < LAUNCH_HARD_TIMEOUT_SECS,
+            "软超时 {LAUNCH_SOFT_TIMEOUT_SECS}s 必须小于硬超时 {LAUNCH_HARD_TIMEOUT_SECS}s"
+        );
+        assert!(
+            LAUNCH_SOFT_TIMEOUT_SECS >= 180,
+            "软超时不应低于实测最慢案例的量级（约 190–200s）"
+        );
+    }
+
+    /// 进度节流参数必须为正：`tick % PROGRESS_EMIT_EVERY` 除零会 panic。
+    #[test]
+    fn progress_emit_interval_is_nonzero() {
+        assert!(PROGRESS_EMIT_EVERY > 0);
+    }
 }

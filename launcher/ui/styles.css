@@ -178,6 +178,42 @@ body {
   transform: scale(0.97);
 }
 
+/* ---------- 启动等待（阶段进度 / 已等待计时 / 取消） ---------- */
+
+/* 等宽数字：秒数每秒刷新时不会因字宽变化而抖动 */
+.launch-elapsed {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.launch-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+/* 次要按钮：慢启动时「取消」不该抢主按钮的视线，故不用品牌渐变 */
+.ghost-btn {
+  padding: 8px 20px;
+  border: 1px solid rgba(148, 180, 220, 0.28);
+  border-radius: 9px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--c-fg-muted);
+  font-size: 13px;
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+
+.ghost-btn:hover {
+  border-color: rgba(148, 180, 220, 0.5);
+  color: var(--c-fg);
+}
+
+.ghost-btn:active {
+  transform: scale(0.97);
+}
+
 .footer {
   margin-top: 24px;
   font-size: 12px;
