@@ -14,6 +14,10 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
+# 单实例保护：重复点击快捷方式时激活已有窗口并让新进程退出，不再堆叠托盘图标。
+# 官方要求它在 builder 里**最先**注册（插件按注册顺序运行，见 lib.rs）。
+# 首次构建需联网拉取该 crate（本机离线缓存里没有）。
+tauri-plugin-single-instance = "2"
 tauri-plugin-global-shortcut = "2"
 # 日志落盘（roadmap v1.2 W10）：官方插件提供 log facade 与按大小轮转的文件 target。
 # 首次构建需要联网拉取 tauri-plugin-log 与 fern（本机离线缓存里没有）。

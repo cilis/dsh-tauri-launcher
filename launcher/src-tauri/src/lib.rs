@@ -73,6 +73,15 @@ pub fn run() {
     logging::set_enabled(settings::load_config().logging_enabled);
 
     tauri::Builder::default()
+        // 单实例插件必须最先注册（官方要求：插件按注册顺序运行）。重复点击快捷方式时
+        // 由它拦下第二个实例——把已有主窗口带到前台，新进程随后自行退出，不再堆叠托盘图标。
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window(windows::WINDOW_MAIN) {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(logging::plugin())
         .manage(AppState::default())
