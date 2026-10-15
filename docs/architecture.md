@@ -455,6 +455,44 @@ DSH 是 React SPA，切会话不产生浏览器历史（`history.back()` 会退�
 `probe_web` 接管路径、秒开——**慢只发生在冷启动**（开机后首次、DSH 崩溃后，
 或用户显式开启了「退出时结束 DeepSeek Harness 进程」）。
 
+## 单实例保护（2026-10-15）
+
+**现象**：重复点击桌面快捷方式，托盘通知区域里堆起多个启动器图标；窗口看起来「正常」，
+没有任何报错。
+
+**根因（两层）**：
+
+1. **没有任何单实例检查**——每点一次快捷方式就起一个全新的 `dsh-launcher.exe`，每个进程
+   都会创建自己的托盘图标。
+2. **第二个实例的外壳服务绑定失败被静默降级**：`shell_server.rs` 里
+   `TcpListener::bind(("127.0.0.1", 3081))` 失败时只 `log::error!` 然后 `return`，
+   既不 panic 也不退出。于是第二个实例照样建主窗口——而它的 URL 也是
+   `http://127.0.0.1:3081`，**加载的其实是第一个实例的外壳页**（同源，浏览器不区分是
+   谁在服务）。两个实例还共写同一个日志文件，所以从外面看一切正常。
+
+**修复**：接入官方 `tauri-plugin-single-instance`。第二个实例启动时在回调里把已有主窗口
+带到前台，随后新进程自行退出。
+
+**约束与注意**：
+
+- **必须在 builder 里最先注册**——官方明确要求「插件按注册顺序运行，这个插件要排在
+  最前」，所以要写在 `tauri-plugin-global-shortcut` 与 `logging::plugin()` 之前。
+- 回调按 `windows::WINDOW_MAIN` 取窗口后 `show` / `unminimize` / `set_focus`；
+  取不到窗口（首个实例还没建完窗口）时静默跳过，不报错。
+- **平台支持**：Windows / Linux / macOS；**Android / iOS 不支持**（README 表格）。本应用
+  只做 Windows，不受影响。
+- **该插件要求 Rust ≥ 1.90**（本机工具链 1.91.1 满足）。
+- **`Cargo.lock` 会多出 44 个包**。其中 zbus / async-* 一族是 **Linux D-Bus 侧的传递
+  依赖**，Windows 构建不会编译它们，只是锁文件变大；`tempfile`、`windows-sys 0.60`、
+  `windows-targets 0.53` 等则在本平台确实参与构建。
+- **不引入 JS 侧依赖、不动 capabilities**：该插件没有前端 API，只在 Rust 侧生效。
+
+**已知的残留行为（有意接受）**：`main.rs` 里 `start_shell_server()` 在 `run()` 之前执行，
+而单实例检查发生在 tauri 初始化时——所以**第二个实例仍会先尝试 bind 3081、失败、打下一行
+error 日志，然后才被插件拦下退出**。功能上无害（那行日志本来就有）。若要连这一行都干净，
+需要自己在 `main()` 开头用命名互斥体做检查，并自行实现「激活已有窗口」的跨进程通信，
+代价明显更大。
+
 ## 状态模型（浏览器侧）
 
 `desktop: true | false | null`（运行中/已停止/状态未知）+ `shortcut: bool`。
