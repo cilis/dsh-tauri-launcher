@@ -10,6 +10,26 @@
 整节中文段控制在 15 行以内；确需展开的（新功能 / 行为变化 / 升级注意）先与用户确认篇幅，
 不自行写长篇。
 
+## v1.1.4 — 2026-10-16
+
+启动等待期间给出阶段进度与已等待时间，慢启动不再被判失败；重复启动不再堆叠托盘图标。
+
+**新增**
+
+- **启动进度与耐心线**：启动卡片实时显示当前阶段（正在加载插件 / 服务已就绪，正在准备界面）与已等待秒数；超过 180 秒改为提示「启动较慢，仍在继续」而不再报超时，硬超时放宽到 600 秒。等待期间可随时取消，慢启动时提供「打开日志目录」。
+- **单实例保护**：重复点击快捷方式不再起第二个进程、不再堆叠托盘图标——已有窗口会被带到前台。
+
+<!-- en -->
+
+### English
+
+Startup now reports its stage and elapsed time instead of failing on a slow start, and a second launch no longer stacks tray icons.
+
+**Added**
+
+- **Startup progress and patience line**: the startup card shows the current stage (loading plugins / service ready, preparing the UI) plus elapsed seconds; past 180s it says "still working" instead of timing out, and the hard timeout moves to 600s. The wait can be cancelled at any time, and slow starts offer "Open log directory".
+- **Single-instance protection**: clicking the shortcut again no longer starts a second process or stacks tray icons — the existing window is brought to the front.
+
 ## v1.1.3 — 2026-10-11
 
 「关于」弹窗里的检查更新对 DSH 本体从提示变成动作，另加日志落盘。
