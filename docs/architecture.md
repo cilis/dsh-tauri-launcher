@@ -487,11 +487,17 @@ DSH 是 React SPA，切会话不产生浏览器历史（`history.back()` 会退�
   `windows-targets 0.53` 等则在本平台确实参与构建。
 - **不引入 JS 侧依赖、不动 capabilities**：该插件没有前端 API，只在 Rust 侧生效。
 
-**已知的残留行为（有意接受）**：`main.rs` 里 `start_shell_server()` 在 `run()` 之前执行，
-而单实例检查发生在 tauri 初始化时——所以**第二个实例仍会先尝试 bind 3081、失败、打下一行
-error 日志，然后才被插件拦下退出**。功能上无害（那行日志本来就有）。若要连这一行都干净，
-需要自己在 `main()` 开头用命名互斥体做检查，并自行实现「激活已有窗口」的跨进程通信，
-代价明显更大。
+**第二个实例是「静默」的（2026-10-16 用户实测修正）**：`main.rs` 里
+`start_shell_server()` 在 `run()` 之前执行，而**日志插件是在 `run()` 的 Builder 里才注册**
+——第二个实例 bind 3081 失败、走到 `shell_server.rs` 的 `log::error!` 时，logger 还没就位，
+`log` crate 因无接收方**直接丢弃该事件**。于是它的完整生命周期是：bind 失败不吭声 →
+tauri 初始化 → 单实例插件拦下 → 退出，**日志文件里没有任何痕迹**。
+
+**连带诊断陷阱**：同一原因使 `shell_server.rs` 里那几条 `log::error!`（bind 失败 /
+非阻塞设置失败）在本应用的实际启动顺序下**永远落不到日志文件**。真出现「外壳服务没起来
+导致白窗」时，**不要指望日志给出原因**——那几条消息目前只在 stdout 可见（且窗口是
+`windows_subsystem = "windows"`，release 下没有控制台）。要让它们可诊断，需把日志初始化
+提到 `start_shell_server()` 之前，或在 bind 失败处改用 eprintln + 自建落盘。
 
 ## 状态模型（浏览器侧）
 
