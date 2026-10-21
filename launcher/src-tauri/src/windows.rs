@@ -142,6 +142,10 @@ pub(crate) fn build_main_window(app: &AppHandle) -> tauri::Result<()> {
         .ok_or(tauri::Error::WindowNotFound)?;
 
     let _built = WebviewWindowBuilder::from_config(app, &config)?
+        // 剪贴板：tauri 默认 clipboard=false，wry 就不注册 WebView2 的
+        // PermissionRequested 处理器（它只在 clipboard=true 时挂），剪贴板读写随之被拒。
+        // 主窗口同时承载外壳页与 DSH iframe，故在这里打开。
+        .enable_clipboard_access()
         .on_new_window(|url, _features| {
             let target = url.as_str();
             if is_external_link(target) {
