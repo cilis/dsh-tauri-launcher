@@ -146,8 +146,15 @@
       </div>
     </header>
 
-    <!-- DSH 承载区：整页跳转改为 iframe，标题栏得以常驻 -->
-    <iframe id="dsh-frame" class="hidden" title="DeepSeek Harness"></iframe>
+    <!-- DSH 承载区：整页跳转改为 iframe，标题栏得以常驻。
+         allow：DSH 在跨源 iframe（3081 → 3080）里，clipboard-write 的 Permissions Policy
+         默认白名单只覆盖 self，不放行则复制按钮的剪贴板 API 一律被拒。 -->
+    <iframe
+      id="dsh-frame"
+      class="hidden"
+      title="DeepSeek Harness"
+      allow="clipboard-read; clipboard-write"
+    ></iframe>
 
     <!-- 接管外部启动的新版实例时的鉴权提示：无法自动完成 token 握手时引导用户；
          插件握手成功（页面正常加载）后自动隐藏 -->
