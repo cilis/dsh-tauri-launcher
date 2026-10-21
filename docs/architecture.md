@@ -139,6 +139,36 @@ exe 目录记入候选列表，避免探测缓存仍是旧值时漏看新实例�
   `http://tauri.localhost`）」收口。**改动外壳端口时须同步更新插件侧
   `SHELL_ORIGINS`**（两侧常量需保持一致）。
 
+## 剪贴板（2026-10-21）
+
+**现象**：外壳窗口里选中文字按 Ctrl+C、或点 DSH 自带的复制按钮，剪贴板都没有内容，
+按钮也没有「已复制」反馈。
+
+**根因两处，缺一不可**：
+
+1. **跨源 iframe 的 Permissions Policy**：外壳在 `127.0.0.1:3081`、DSH 在
+   `127.0.0.1:3080`，端口不同即不同 **origin**（SameSite 只比主机，权限策略不认这套）。
+   `clipboard-write` 的默认白名单是 `self`，iframe 不声明 `allow` 时
+   `navigator.clipboard.writeText()` 一律抛 `NotAllowedError`；DSH 的复制按钮
+   （`zo()`）随后的 `document.execCommand('copy')` 兜底同样拿不到剪贴板，
+   于是按钮连「已复制」状态都不出现。
+2. **宿主没打开剪贴板权限**：tauri 的 `WebviewAttributes.clipboard` 默认 **false**，
+   wry 只在它为 true 时才注册 WebView2 的 `PermissionRequested` 处理器
+   （wry `webview2/mod.rs` 的 `if attributes.clipboard` 分支），且该处理器只自动放行
+   `CLIPBOARD_READ`。主窗口 builder 从未调用 `enable_clipboard_access()`。
+
+**修复**：`ui/index.html` 的 iframe 加 `allow="clipboard-read; clipboard-write"`；
+`windows.rs` 的主窗口 builder 链上加 `.enable_clipboard_access()`。
+
+**注意**：
+
+- `enable_clipboard_access()` 只作用于**它所在的 builder**。设置窗与退出进度窗各自独立，
+  目前不需要剪贴板，未开。
+- 以后若再嵌新的跨源 iframe（端口不同也算），同样要显式写 `allow`——默认不继承父页的
+  权限策略，症状是 API 静默抛错而不是报权限错误。
+- Ctrl+C 是浏览器原生编辑命令，不走 `navigator.clipboard`；本次一并修的是它依赖的
+  剪贴板通道，改完需真机复测两条路径。
+
 ## 外壳 ↔ 插件消息协议（postMessage）
 
 外壳页（`ui/main.js`，承载于 `http://127.0.0.1:3081`）与 iframe 内插件的双向通道。
