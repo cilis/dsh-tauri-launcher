@@ -10,6 +10,23 @@
 整节中文段控制在 15 行以内；确需展开的（新功能 / 行为变化 / 升级注意）先与用户确认篇幅，
 不自行写长篇。
 
+## v1.1.5 — 2026-10-21
+
+修好启动器窗口里复制不了的问题：文字能选中，但 Ctrl+C 与 DSH 的复制按钮都没有反应。
+
+**修复**
+
+- **无法复制**：外壳与 DSH 分属不同 origin（3081 与 3080），iframe 未声明剪贴板权限，DSH 的 `navigator.clipboard` 与其 `execCommand` 兜底全部失败。现已在 iframe 上放行 `clipboard-read` / `clipboard-write`，并为 WebView2 打开剪贴板权限；复制按钮恢复「已复制」反馈。
+
+<!-- en -->
+
+### English
+
+Copying works again in the launcher window, where text could be selected but neither Ctrl+C nor DSH's copy button did anything.
+
+**Fixed**
+
+- **Copy was blocked**: the shell and DSH live on different origins (3081 and 3080) and the iframe never delegated clipboard permissions, so DSH's `navigator.clipboard` call and its `execCommand` fallback both failed. The iframe now allows `clipboard-read`/`clipboard-write` and the webview has clipboard access enabled; the copy button reports "copied" again.
 ## v1.1.4 — 2026-10-16
 
 启动等待期间给出阶段进度与已等待时间，慢启动不再被判失败；重复启动不再堆叠托盘图标。
