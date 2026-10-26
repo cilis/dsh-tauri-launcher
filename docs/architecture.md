@@ -529,6 +529,40 @@ tauri 初始化 → 单实例插件拦下 → 退出，**日志文件里没有�
 `windows_subsystem = "windows"`，release 下没有控制台）。要让它们可诊断，需把日志初始化
 提到 `start_shell_server()` 之前，或在 bind 失败处改用 eprintln + 自建落盘。
 
+## 启动器自更新与 PID 认领（2026-10-21）
+
+**链路**：`check_launcher_update` 查清单 → `install_launcher_update` 下载 + 验签 → 交给
+NSIS 安装器 → 插件内部 `std::process::exit(0)`。应用侧只碰 `tauri-plugin-updater` 的
+**Rust API**，不引 JS 插件、不新增 webview；端点与公钥都在 `tauri.conf.json` 的
+`plugins.updater`。下载进度按 200ms 节流发 `update-progress`，载荷
+`{phase: downloading|verifying|installing, received, total}`。
+
+**错误契约**：所有失败返回 `前缀：中文说明（英文原文）`，前缀只有
+`network|manifest|signature|io|unsupported`——外壳靠前缀决定文案与是否给重试入口（网络
+可重试，验签失败只能重下）。
+
+**PID 认领**：`LauncherConfig` 里新增可选字段 `dsh_pid`（记本应用拉起的 dsh 子进程）。
+启动时若 3080 已被占用，只有三个条件同时成立才认作「上一次自己拉起的」：记录存在且
+> 0、该 PID 仍查得到映像路径、映像与当前 `dsh::node_exe()` 规范化后相等（Windows 忽略
+大小写与分隔符）。任一不成立一律 `adopt()`（外部实例，退出不动它）——**误杀别人的进程
+比漏杀更糟**。
+
+**为什么字段放在 `LauncherConfig` 而不是单独文件**：设置窗每次保存都会把整份
+`.dsh-config.json` 重写一遍，字段不在结构体里就会被写没，认领随之退化成外部实例。
+
+**与退出策略的关系**：插件安装前会回调 `on_before_exit`，那里调用既有的
+`shutdown::exit_launcher`——所以自更新走的是**同一套**退出语义：默认「保留」模式把 dsh
+孤儿化，新实例起来后靠 PID 认领接管；只有用户显式开启「退出时结束 DSH」才会在更新前
+结束它。
+
+**发布侧**：`release.yml` 拆成 `build-launcher`（裸 exe，先发）与 `package-nsis`
+（`needs` 串联，产 NSIS 安装包 + `.nsis.zip` + `.sig` + `latest.json`）。清单里同时给
+`windows-x86_64-nsis` 与 `windows-x86_64` 两个键，后者服务迁移期的裸 exe。签名私钥来自
+secret `TAURI_SIGNING_PRIVATE_KEY`，缺它时安装包不会产出（裸 exe 仍照常发布）。
+
+**顺序约束**：workflow 只对「tag 所指 commit」生效，改了 `release.yml` 必须先进 main
+再打下一个 tag；`latest.json` 里的下载地址钉住具体 tag，老清单不会因后续发版失效。
+
 ## 状态模型（浏览器侧）
 
 `desktop: true | false | null`（运行中/已停止/状态未知）+ `shortcut: bool`。
