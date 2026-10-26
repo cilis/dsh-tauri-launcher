@@ -1,6 +1,9 @@
 //! DeepSeek Harness 子进程托管：全局状态 [`AppState`]、检测/安装/启动/停止
 //! 命令、日志环形缓冲与日志泵、孤儿化/强杀等子进程生命周期操作。
 //! 具体的检测/安装/端口探测逻辑在 [`crate::dsh`]（与 tauri 解耦、可独立测试）。
+//!
+//! 另含「PID 认领」：本应用拉起的 dsh PID 会被记进 exe 同目录配置，下次启动
+//! 遇到端口已被占用时用它分辨「端口上跑的是上一次自己拉起的」还是「别人的实例」。
 
 use std::collections::VecDeque;
 use std::process::{Command as StdCommand, Stdio};
@@ -59,12 +62,19 @@ pub enum HarnessProcess {
         /// 此时只能按句柄终止，无法 taskkill 整棵进程树。
         pid: Option<u32>,
     },
+    /// 认领的实例：端口上跑的是**上一次本应用拉起的** dsh（配置里的 PID 仍存活、
+    /// 映像路径与当前 node.exe 一致）。本应用拿不到它的句柄，只有 PID，
+    /// 但退出时应当终止它——这正是与「别人的实例」的区别。
+    Claimed {
+        pid: u32,
+    },
 }
 
 /// 从托管状态中取出的自有子进程，提供「终止」与「放弃」两种归宿。
 /// 取出即状态置回 [`HarnessProcess::None`]，后续操作与状态锁无关。
 pub(crate) struct OwnedChild {
-    child: tokio::process::Child,
+    /// 本应用拉起的子进程句柄；PID 认领来的实例没有句柄（只有 PID）。
+    child: Option<tokio::process::Child>,
     pid: Option<u32>,
 }
 
@@ -74,7 +84,7 @@ impl OwnedChild {
     /// taskkill 通常几十毫秒，代价可接受；句柄另做 `start_kill` 兜底。
     /// 失败留痕：原实现静默丢弃 taskkill 结果，无法区分「进程树没杀干净」与
     /// 「本就没有可杀进程」（优化报告 v2 C6）。
-    pub(crate) fn terminate(mut self) {
+    pub(crate) fn terminate(self) {
         if let Some(pid) = self.pid {
             #[cfg(windows)]
             {
@@ -99,18 +109,26 @@ impl OwnedChild {
             }
         }
         // 兜底：taskkill 后进程通常已退出，kill_on_drop 的二次 kill 无害。
-        let _ = self.child.start_kill();
+        if let Some(mut child) = self.child {
+            let _ = child.start_kill();
+        }
     }
 
     /// 放弃托管：进程作为孤儿继续运行，句柄交由系统回收。
-    /// `forget` 阻止 drop 触发 kill_on_drop。
+    /// `forget` 阻止 drop 触发 kill_on_drop（认领来的实例没有句柄，无需处理）。
     pub(crate) fn orphan(self) {
-        std::mem::forget(self.child);
+        if let Some(child) = self.child {
+            std::mem::forget(child);
+        }
     }
 }
 
 impl HarnessProcess {
-    /// 是否由本应用启动并托管（true 时退出必须终止）。
+    /// 是否由本应用**本次运行**启动并托管。
+    ///
+    /// 认领来的实例（[`HarnessProcess::Claimed`]）不算：接管路径的其它行为
+    /// （外壳的 401 引导、`restart_dsh_external` 的「关闭并重启」）必须保持现状，
+    /// 认领只影响退出时的终止。它靠 [`HarnessProcess::take_owned`] 被终止。
     pub(crate) fn is_owned(&self) -> bool {
         matches!(self, HarnessProcess::Owned { .. })
     }
@@ -125,6 +143,15 @@ impl HarnessProcess {
         *self = HarnessProcess::Adopted;
     }
 
+    /// 记录「端口上的实例是上一次本应用拉起的」（PID 认领成功）。
+    /// 与 [`HarnessProcess::adopt`] 一致：先放弃此前托管的自有进程（不终止）。
+    pub(crate) fn claim(&mut self, pid: u32) {
+        if let Some(previous) = self.take_owned() {
+            previous.orphan();
+        }
+        *self = HarnessProcess::Claimed { pid };
+    }
+
     /// 记录“由本应用启动”的托管进程（同时取代旧状态）。
     pub(crate) fn own(&mut self, child: tokio::process::Child, pid: Option<u32>) {
         if let Some(previous) = self.take_owned() {
@@ -136,7 +163,15 @@ impl HarnessProcess {
     /// 取出自有子进程并置回未托管；无自有进程时返回 None。
     pub(crate) fn take_owned(&mut self) -> Option<OwnedChild> {
         match std::mem::take(self) {
-            HarnessProcess::Owned { child, pid } => Some(OwnedChild { child, pid }),
+            HarnessProcess::Owned { child, pid } => Some(OwnedChild {
+                child: Some(child),
+                pid,
+            }),
+            // 认领来的实例只有 PID：终止能力保留（退出/taskkill 整棵树），无句柄可放弃。
+            HarnessProcess::Claimed { pid } => Some(OwnedChild {
+                child: None,
+                pid: Some(pid),
+            }),
             other => {
                 *self = other;
                 None
@@ -267,6 +302,79 @@ where
     });
 }
 
+// ---- PID 认领：把「本应用拉起的实例」与「别人的实例」分开 ----
+
+/// 写入/清除配置里的 dsh PID（`None` = 清除该字段）。
+///
+/// 字段本身属于 `settings::LauncherConfig`：设置窗保存时整体重写 JSON，字段若不在
+/// 结构体里就会被写没，认领随之退化成「外部实例」（退出不再停 DSH）。
+fn save_recorded_pid(pid: Option<u32>) {
+    crate::settings::set_recorded_dsh_pid(pid);
+}
+
+/// 读配置里记录的 dsh PID（没有记录或值不合法 → None）。
+fn recorded_pid() -> Option<u32> {
+    crate::settings::recorded_dsh_pid()
+}
+
+/// 查询进程的映像完整路径；进程已退出或查不到（无权限/系统进程）→ None。
+///
+/// 用 PowerShell 而不是新增 Win32 依赖：项目里其它「读系统状态」的地方
+/// （reg / netstat / 桌面目录）都走同一条路子，只多一次几百毫秒的探测，
+/// 且只在「端口已被占用」这一条启动路径上发生。
+#[cfg(windows)]
+fn process_image_path(pid: u32) -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    // .Path 对无权访问的进程会是空串——那正是我们要的「判定不清」。
+    let script = format!("(Get-Process -Id {pid} -ErrorAction SilentlyContinue).Path");
+    let out = StdCommand::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(0x0800_0000)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!path.is_empty()).then_some(path)
+}
+
+#[cfg(not(windows))]
+fn process_image_path(_pid: u32) -> Option<String> {
+    None
+}
+
+/// 规范化用于比较的映像路径：Windows 大小写不敏感、两种分隔符混用，
+/// 其余平台只去掉首尾空白与尾部分隔符。
+fn normalize_image_path(path: &str) -> String {
+    let trimmed = path.trim().trim_end_matches(|c| c == '\\' || c == '/');
+    #[cfg(windows)]
+    let normalized = trimmed.replace('/', "\\").to_lowercase();
+    #[cfg(not(windows))]
+    let normalized = trimmed.to_string();
+    normalized
+}
+
+/// PID 认领判定（纯函数，便于回归测试）。
+///
+/// 三个条件同时成立才算「自有进程」：配置里有 PID、该 PID 现在还查得到映像、
+/// 且映像与当前要拉起的 node.exe 是同一路径。任何一项不满足一律保守当作外部
+/// 实例——误杀别人的进程比漏杀更糟。
+fn claims_own_process(
+    recorded: Option<u32>,
+    live_image: Option<&str>,
+    node_path: Option<&str>,
+) -> bool {
+    let (Some(pid), Some(live), Some(node)) = (recorded, live_image, node_path) else {
+        return false;
+    };
+    // PID 0 是系统空闲进程，不可能是我们的子进程。
+    if pid == 0 {
+        return false;
+    }
+    !live.trim().is_empty() && normalize_image_path(live) == normalize_image_path(node)
+}
+
 #[tauri::command]
 pub(crate) async fn check_dsh() -> dsh::CheckResult {
     dsh::check()
@@ -290,6 +398,8 @@ pub(crate) async fn install_dsh(app: AppHandle) -> Result<String, String> {
 /// 启动超时、`stop_dsh` 命令与退出清理共用本函数。
 pub(crate) fn terminate_harness(state: &AppState) {
     if let Some(owned) = state.proc_guard().take_owned() {
+        // 进程已被杀：旧 PID 可能被系统复用，留着记录会造成下一次启动误认领。
+        save_recorded_pid(None);
         owned.terminate();
     }
 }
@@ -349,7 +459,18 @@ async fn launch_dsh_inner(
     if probe == dsh::ProbeResult::MarkerHit || probe == dsh::ProbeResult::AuthRequired {
         let url = dsh::DSH_URL.to_string();
         *state.url.lock().map_err(|_| "应用状态不可用")? = Some(url.clone());
-        state.proc_guard().adopt();
+        // PID 认领：上一次本应用拉起、退出时被孤儿化的 dsh 仍占着端口时，
+        // 配置里的 PID 必须「仍存活 + 映像与当前 node.exe 一致」才算自有进程
+        // （此时退出仍 taskkill 它）。其余情形维持既有「接管外部实例」行为不变：
+        // 不写 url 之外的状态，也不动 owned / auth_uncertain 的语义。
+        let recorded = recorded_pid();
+        let node = dsh::node_exe();
+        let live_image = recorded.and_then(process_image_path);
+        let claimed = claims_own_process(recorded, live_image.as_deref(), node.as_deref());
+        match (claimed, recorded) {
+            (true, Some(pid)) => state.proc_guard().claim(pid),
+            _ => state.proc_guard().adopt(),
+        }
         return Ok(LaunchInfo {
             url,
             port: dsh::DSH_PORT,
@@ -384,6 +505,8 @@ async fn launch_dsh_inner(
     cmd.creation_flags(0x0800_0000);
     let mut child = cmd.spawn().map_err(|e| format!("无法启动 dsh 进程：{e}"))?;
     let pid = child.id();
+    // 持久化 PID：退出若是「保留」模式，进程会被孤儿化继续跑，下次启动靠它认领。
+    save_recorded_pid(pid);
 
     // 新版 DSH 的启动 URL（带进程 token）只经 stdout 的 `dsh web:` 行对外；
     // 日志泵逐行回调匹配并捕获，旧版不打印该行时保持 None、自然走指纹路径。
@@ -542,5 +665,48 @@ mod tests {
     #[test]
     fn progress_emit_interval_is_nonzero() {
         assert!(PROGRESS_EMIT_EVERY > 0);
+    }
+
+    /// PID 认领判定：三个条件（有记录 / 进程活着 / 映像与 node.exe 同路径）
+    /// 必须同时成立；任何一项缺失都保守当外部实例（宁可漏杀，不可误杀）。
+    #[test]
+    fn claim_requires_live_node_image() {
+        let node = r"C:\Program Files\nodejs\node.exe";
+        assert!(claims_own_process(Some(4321), Some(node), Some(node)));
+
+        // 进程已退出 / 查不到映像路径 → 外部
+        assert!(!claims_own_process(Some(4321), None, Some(node)));
+        assert!(!claims_own_process(Some(4321), Some(""), Some(node)));
+        // 没有记录 / 找不到当前 node → 外部
+        assert!(!claims_own_process(None, Some(node), Some(node)));
+        assert!(!claims_own_process(Some(4321), Some(node), None));
+        // PID 0 是系统进程，永不认领
+        assert!(!claims_own_process(Some(0), Some(node), Some(node)));
+        // 映像不同（端口被另一个 node 程序占了）→ 外部
+        assert!(!claims_own_process(
+            Some(4321),
+            Some(r"C:\other-app\node.exe"),
+            Some(node)
+        ));
+    }
+
+    /// Windows 的路径比较必须忽略大小写与分隔符差异：认领判定靠它，
+    /// 大小写不一致就判成外部实例，等于「自有进程永远认不回来」。
+    #[test]
+    fn image_path_comparison_is_case_and_separator_insensitive() {
+        let node = r"C:\Program Files\nodejs\node.exe";
+        // 尾部分隔符与首尾空白都不该影响判定
+        assert!(claims_own_process(
+            Some(7),
+            Some(" C:/Program Files/nodejs/ "),
+            Some("C:/Program Files/nodejs")
+        ));
+        assert!(claims_own_process(Some(7), Some(format!("  {node}  ").as_str()), Some(node)));
+        #[cfg(windows)]
+        assert!(claims_own_process(
+            Some(7),
+            Some("c:/program files/NODEJS/NODE.EXE"),
+            Some(node)
+        ));
     }
 }

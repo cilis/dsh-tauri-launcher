@@ -357,6 +357,17 @@
       log.textContent = "";
       log.classList.add("hidden");
     }
+    launcherSelfUpdate = null;
+    launcherInstallArmed = false;
+    const installBtn = document.getElementById("about-install-launcher");
+    if (installBtn && !launcherInstallBusy) {
+      installBtn.textContent = "下载并安装";
+      installBtn.disabled = false;
+    }
+    document.getElementById("about-launcher-update")?.classList.add("hidden");
+    document.getElementById("about-install-progress")?.classList.add("hidden");
+    setInstallProgress(null);
+    setText("about-install-status", "");
     setText("about-check-status", "");
     setText("about-upgrade-status", "");
     document.getElementById("about-update-result")?.classList.add("hidden");
@@ -471,6 +482,8 @@
       const report = await invoke("check_updates");
       aboutReport = report;
       renderUpdateReport(report);
+      // 自更新是增量能力：单独探测、结果异步到达，不影响上面这份报告的展示
+      void loadLauncherSelfUpdate();
     } catch (e) {
       if (status) status.textContent = `检查失败：${formatError(e)}`;
     } finally {
@@ -505,6 +518,13 @@
         btn.textContent = original;
       }, 1500);
     }
+  }
+
+  /** 「打开下载页」的唯一点击路径：既有按钮与自更新入口的次要出口都走这里。 */
+  function openDownloadPage() {
+    void invoke("open_in_browser", { key: "releases" }).catch((e) =>
+      console.error("浏览器打开失败", e),
+    );
   }
 
   /* ---------- DSH 一键升级（W15） ---------- */
@@ -614,6 +634,190 @@
     void runDshUpgrade();
   }
 
+  /* ---------- 启动器自更新（增量：以上两条既有升级路径原样保留） ---------- */
+
+  /** check_launcher_update 的成功结果；null 表示当前没有可自更新的新版本。 */
+  let launcherSelfUpdate = null;
+
+  /** 安装按钮的两步确认开关：与 confirmArmed 同一套做法，独立变量避免两个入口互相预热。 */
+  let launcherInstallArmed = false;
+
+  /** 安装进行中：期间禁用主按钮，避免重复触发下载。 */
+  let launcherInstallBusy = false;
+
+  /** update-progress 订阅的退订函数。 */
+  let launcherProgressUnlisten = () => {};
+
+  /** 后端失败前缀 → 中文文案（契约：network|manifest|signature|io|unsupported 开头）。
+   *  未识别的拒绝原样带出，不吞原因。 */
+  const LAUNCHER_UPDATE_ERRORS = {
+    network: "网络不可达",
+    manifest: "更新清单获取失败",
+    signature: "安装包校验失败",
+    io: "读写安装包失败",
+    unsupported: "当前安装方式不支持自更新",
+  };
+
+  function describeLauncherUpdateError(e) {
+    const text = formatError(e) || "";
+    const m = /^\s*(network|manifest|signature|io|unsupported)\b[\s:：-]*(.*)$/is.exec(text);
+    if (!m) return text || "未知错误";
+    const label = LAUNCHER_UPDATE_ERRORS[m[1]];
+    const detail = m[2].trim();
+    return detail ? `${label}：${detail}` : label;
+  }
+
+  /** 字节数 → 可读文案（total 缺失时用它显示已下载字节）。 */
+  function formatBytes(n) {
+    const v = Number(n);
+    if (!Number.isFinite(v) || v <= 0) return "0 B";
+    const units = ["B", "KB", "MB", "GB"];
+    let size = v;
+    let i = 0;
+    while (size >= 1024 && i < units.length - 1) {
+      size /= 1024;
+      i += 1;
+    }
+    return `${i === 0 ? Math.round(size) : size.toFixed(1)} ${units[i]}`;
+  }
+
+  /** 进度条：ratio 传 null 则整条隐藏（校验 / 安装阶段只留文案）。 */
+  function setInstallProgress(ratio) {
+    const track = document.getElementById("about-install-track");
+    const fill = document.getElementById("about-install-fill");
+    if (!track || !fill) return;
+    if (ratio == null) {
+      track.classList.add("hidden");
+      return;
+    }
+    track.classList.remove("hidden");
+    fill.style.width = `${Math.max(0, Math.min(1, ratio)) * 100}%`;
+  }
+
+  /** update-progress 载荷 → 文案：下载百分比 / 校验中 / 正在安装。 */
+  function renderInstallProgress(payload) {
+    const phase = payload?.phase;
+    const received = Number(payload?.received) || 0;
+    const total = Number(payload?.total) || 0;
+    if (phase === "downloading") {
+      if (total > 0) {
+        const ratio = Math.min(1, received / total);
+        setInstallProgress(ratio);
+        setText(
+          "about-install-status",
+          `正在下载 ${Math.round(ratio * 100)}%（${formatBytes(received)} / ${formatBytes(total)}）`,
+        );
+      } else {
+        setInstallProgress(null);
+        setText("about-install-status", `正在下载 ${formatBytes(received)}`);
+      }
+      return;
+    }
+    if (phase === "verifying") {
+      setText("about-install-status", "正在校验安装包…");
+      return;
+    }
+    if (phase === "installing") {
+      setText("about-install-status", "正在安装，应用即将退出…");
+    }
+  }
+
+  /** 订阅 update-progress（载荷 { phase, received, total? }），返回退订函数。 */
+  async function listenUpdateProgress(onProgress) {
+    const event = window.__TAURI__?.event;
+    if (!event?.listen) return () => {};
+    try {
+      const off = await event.listen("update-progress", (e) => onProgress(e?.payload || {}));
+      return () => {
+        try {
+          off();
+        } catch {
+          /* 退订失败无副作用 */
+        }
+      };
+    } catch (e) {
+      console.error("订阅更新进度失败", e);
+      return () => {};
+    }
+  }
+
+  /**
+   * 探测启动器自更新。失败（命令缺失 / 安装方式不支持 / 离线）一律静默隐藏入口：
+   * 自更新是增量能力，坏掉不能拖累「检查更新」那份既有结果。
+   */
+  async function loadLauncherSelfUpdate() {
+    launcherSelfUpdate = null;
+    document.getElementById("about-launcher-update")?.classList.add("hidden");
+    try {
+      const info = await invoke("check_launcher_update");
+      if (!info?.latest) return;
+      // 不做语义化比较：只认「不相等」。漏报无害，误报会诱导重装同版本
+      if (info.current === info.latest) return;
+      launcherSelfUpdate = info;
+      const installBtn = document.getElementById("about-install-launcher");
+      if (installBtn) installBtn.title = `v${info.current || "?"} → v${info.latest}`;
+      document.getElementById("about-launcher-update")?.classList.remove("hidden");
+    } catch (e) {
+      console.warn("启动器自更新不可用", e);
+    }
+  }
+
+  /**
+   * 下载并安装启动器新版本。成功时进程由安装器接管退出，所以 try 之后那段通常跑不到；
+   * 真跑到了说明没接管——主按钮保持禁用（安装已发起，重复点击没有意义），
+   * 「去下载页」始终可点，用户仍有出路。
+   */
+  async function runLauncherInstall() {
+    const btn = document.getElementById("about-install-launcher");
+    if (!btn || launcherInstallBusy) return;
+    launcherInstallBusy = true;
+    btn.disabled = true;
+    btn.textContent = "下载并安装";
+    document.getElementById("about-install-progress")?.classList.remove("hidden");
+    setInstallProgress(null);
+    setText("about-install-status", "正在准备下载…");
+
+    launcherProgressUnlisten();
+    launcherProgressUnlisten = await listenUpdateProgress(renderInstallProgress);
+
+    try {
+      await invoke("install_launcher_update");
+      launcherProgressUnlisten();
+      launcherProgressUnlisten = () => {};
+      // 成功后进程应被安装器接管退出：主按钮保持禁用（重复发起没有意义），
+      // 但不再算「飞行中」——重新打开「关于」会复位成可点击（见 resetUpdateArea）
+      launcherInstallBusy = false;
+      setText("about-install-status", "安装程序已启动，请按提示完成安装。");
+    } catch (e) {
+      launcherProgressUnlisten();
+      launcherProgressUnlisten = () => {};
+      setInstallProgress(null);
+      setText("about-install-status", `安装失败：${describeLauncherUpdateError(e)}`);
+      launcherInstallBusy = false;
+      btn.disabled = false;
+    }
+  }
+
+  /** 两步确认（同 W15）：第一次点击只把文案切成「确认安装」，4 秒内再点才执行。 */
+  function onInstallLauncherClick() {
+    const btn = document.getElementById("about-install-launcher");
+    if (!btn || launcherInstallBusy) return;
+    if (!launcherInstallArmed) {
+      launcherInstallArmed = true;
+      btn.textContent = "确认安装";
+      setTimeout(() => {
+        if (launcherInstallArmed) {
+          launcherInstallArmed = false;
+          btn.textContent = "下载并安装";
+        }
+      }, 4000);
+      return;
+    }
+    launcherInstallArmed = false;
+    btn.textContent = "下载并安装";
+    void runLauncherInstall();
+  }
+
   function setupAbout() {
     document.getElementById("about-close")?.addEventListener("click", closeAbout);
     // 点遮罩关闭；点卡片内部不关
@@ -626,17 +830,19 @@
     document
       .getElementById("about-check")
       ?.addEventListener("click", () => void runUpdateCheck());
-    document.getElementById("about-download")?.addEventListener("click", () => {
-      void invoke("open_in_browser", { key: "releases" }).catch((e) =>
-        console.error("浏览器打开失败", e),
-      );
-    });
+    document.getElementById("about-download")?.addEventListener("click", openDownloadPage);
     document
       .getElementById("about-copy")
       ?.addEventListener("click", () => void copyUpgradeCommand());
     document
       .getElementById("about-upgrade-dsh")
       ?.addEventListener("click", onUpgradeDshClick);
+    document
+      .getElementById("about-install-launcher")
+      ?.addEventListener("click", onInstallLauncherClick);
+    document
+      .getElementById("about-launcher-download")
+      ?.addEventListener("click", openDownloadPage);
   }
 
   function setupTitlebar() {

@@ -22,6 +22,8 @@ commands.allow = [
   "check_updates",
   "get_log_info",
   "open_log_dir",
+  "check_launcher_update",
+  "install_launcher_update",
   "get_settings",
   "set_autostart_setting",
   "set_global_shortcut_setting",

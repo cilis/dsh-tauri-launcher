@@ -196,6 +196,21 @@
               </div>
               <pre id="about-upgrade-log" class="hidden"></pre>
             </div>
+            <!-- 启动器自更新（增量入口）：check_launcher_update 报有新版本时出现。
+                 主按钮「下载并安装」沿用 W15 的两步确认（先切成「确认安装」）；
+                 「去下载页」保留为次要出口（网络受限或安装方式不支持时手动下载）。 -->
+            <div id="about-launcher-update" class="hidden">
+              <div class="about-buttons">
+                <button id="about-install-launcher">下载并安装</button>
+                <button id="about-launcher-download">去下载页</button>
+              </div>
+              <div id="about-install-progress" class="about-progress hidden">
+                <div id="about-install-track" class="about-progress-track hidden">
+                  <div id="about-install-fill" class="about-progress-fill"></div>
+                </div>
+                <span id="about-install-status"></span>
+              </div>
+            </div>
             <p id="about-update-drift" class="hidden"></p>
             <div id="about-update-actions" class="hidden">
               <p id="about-exe-path"></p>

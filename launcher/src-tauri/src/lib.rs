@@ -11,6 +11,7 @@
 //! - [`markers`]  — 心跳/退出标记文件轮询
 //! - [`theme`]    — 系统主题检测、图标刷新与事件广播
 //! - [`tray`]     — 托盘菜单构建与事件分发
+//! - [`updater`]  — 启动器自身更新（tauri-plugin-updater 的 Rust API：检查/下载/验签/安装）
 //! - [`shell_server`] — 外壳页本地静态服务（127.0.0.1:3081，与 DSH 同站）
 
 mod dsh;
@@ -24,6 +25,7 @@ mod shell_server;
 mod shutdown;
 mod theme;
 mod tray;
+mod updater;
 mod windows;
 
 use tauri::Manager;
@@ -83,6 +85,9 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        // 自更新插件：只用它的 Rust API（下载/验签/安装），前端不调它的命令。
+        // 端点到公钥全部来自 tauri.conf.json 的 plugins.updater。
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(logging::plugin())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
@@ -106,6 +111,8 @@ pub fn run() {
             windows::open_settings_window,
             windows::hide_all_windows,
             windows::open_in_browser,
+            updater::check_launcher_update,
+            updater::install_launcher_update,
             shutdown::quit_app
         ])
         .setup(|app| {
