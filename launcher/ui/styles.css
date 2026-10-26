@@ -569,7 +569,9 @@ body {
 #about-check,
 #about-download,
 #about-copy,
-#about-upgrade-dsh {
+#about-upgrade-dsh,
+#about-install-launcher,
+#about-launcher-download {
   height: 28px;
   padding: 0 12px;
   border: 1px solid var(--tb-menu-border, rgba(0, 0, 0, 0.12));
@@ -584,13 +586,59 @@ body {
 #about-check:hover,
 #about-download:hover,
 #about-copy:hover,
-#about-upgrade-dsh:hover {
+#about-upgrade-dsh:hover,
+#about-install-launcher:hover,
+#about-launcher-download:hover {
   background: var(--tb-hover, rgba(17, 24, 39, 0.08));
 }
 
 #about-check:disabled,
-#about-upgrade-dsh:disabled {
+#about-upgrade-dsh:disabled,
+#about-install-launcher:disabled {
   opacity: 0.55;
+}
+
+/* 启动器自更新（增量入口）：主按钮「下载并安装」+ 细进度条 + 行内状态。
+   配色一律走 --tb-* / currentColor，不引入新的静态色板 */
+#about-launcher-update {
+  margin-top: 10px;
+}
+
+#about-launcher-update .about-buttons {
+  margin-top: 0;
+}
+
+#about-install-launcher {
+  font-weight: 600;
+}
+
+.about-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.about-progress-track {
+  flex: 1 1 auto;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--tb-hover, rgba(17, 24, 39, 0.12));
+  overflow: hidden;
+}
+
+.about-progress-fill {
+  width: 0;
+  height: 100%;
+  background: currentColor;
+  opacity: 0.55;
+  transition: width 0.15s linear;
+}
+
+#about-install-status {
+  font-size: 12px;
+  opacity: 0.75;
+  word-break: break-all;
 }
 
 #about-check-status {

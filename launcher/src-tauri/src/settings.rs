@@ -40,6 +40,13 @@ pub(crate) struct LauncherConfig {
     /// 是否把日志写入 `%LOCALAPPDATA%\dsh-launcher\logs\`（默认开启）。
     #[serde(default = "default_logging_enabled")]
     pub logging_enabled: bool,
+    /// 本应用拉起的 dsh 子进程 PID（供下次启动做「PID 认领」，见 harness）。
+    ///
+    /// 它寄存在这份配置里而不是单独一个文件：设置窗每次保存都会重写整份 JSON，
+    /// 字段留在结构体里才不会被写没——写没就退化成「外部实例」，退出不再停 DSH。
+    /// 未设置时不落盘，保持旧配置原样。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) dsh_pid: Option<u32>,
 }
 
 /// 手写 Default：`logging_enabled` 的默认值是 true，而 derive 会给 false——
@@ -50,6 +57,7 @@ impl Default for LauncherConfig {
             global_shortcut: false,
             terminate_harness_on_exit: false,
             logging_enabled: default_logging_enabled(),
+            dsh_pid: None,
         }
     }
 }
@@ -74,6 +82,28 @@ fn save_config(config: &LauncherConfig) {
             let _ = std::fs::write(path, json);
         }
     }
+}
+
+/// 读「上一次本应用拉起的 dsh PID」。没有记录、值非法或为 0 一律 None。
+pub(crate) fn recorded_dsh_pid() -> Option<u32> {
+    load_config().dsh_pid.filter(|pid| *pid > 0)
+}
+
+/// 记录/清除 dsh PID（None = 清除），保留同一份配置里的其它设置。
+///
+/// 只在「值真的变了」时写盘；清除时若配置文件本就不存在，也不凭空造一个空文件
+/// ——首次运行不落盘是既有行为。
+pub(crate) fn set_recorded_dsh_pid(pid: Option<u32>) {
+    let mut config = load_config();
+    if config.dsh_pid == pid {
+        return;
+    }
+    config.dsh_pid = pid;
+    let exists = config_path().map(|p| p.exists()).unwrap_or(false);
+    if pid.is_none() && !exists {
+        return;
+    }
+    save_config(&config);
 }
 
 /// 查询 Windows 开机自启是否已启用（HKCU Run 键是否存在）。
