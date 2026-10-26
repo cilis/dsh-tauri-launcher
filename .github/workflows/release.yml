@@ -183,3 +183,159 @@ jobs:
               Write-Host "附件 dsh-launcher.exe 已上传。"
             }
           }
+
+  # 安装包与 updater 清单走**独立 job**：它 needs 上面那个 job，所以裸 exe 已经先一步
+  # 发上 GitHub Release / Gitee。之后本 job 里的任何失败（tauri CLI、NSIS 打包、签名、
+  # 清单生成）都不会回滚或阻塞裸 exe 的发布 —— needs 只决定启动顺序，不反向连坐。
+  # 失败仍会让整条 workflow 变红，那是应有可见性：少一个安装包不该静默通过。
+  package-nsis:
+    needs: build-launcher
+    runs-on: windows-latest
+    env:
+      # secrets 不能出现在 step 的 if 条件里（if 求值时不提供 secrets 上下文），
+      # 统一在 job 级注入，step 内再用 env 判断 / 取值。
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # 缺密钥时 tauri build 只会甩一句难读的签名错误，这里先给出可读原因。
+      - name: 校验 updater 签名密钥
+        shell: pwsh
+        run: |
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+            throw "未配置 TAURI_SIGNING_PRIVATE_KEY secret（仓库 Settings -> Secrets -> Actions），无法生成 updater 签名产物。"
+          }
+
+      - name: Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 cargo 注册表
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: launcher/src-tauri
+
+      - name: 安装 Tauri CLI
+        run: npm i -g @tauri-apps/cli@^2
+
+      # --bundles nsis 只出 NSIS 安装包；updater 的 .nsis.zip / .sig 由 tauri.conf.json
+      # 的 createUpdaterArtifacts: true 打开，签名私钥来自上面的 env。
+      - name: 构建 NSIS 安装包与 updater 产物
+        run: tauri build --bundles nsis
+        working-directory: launcher
+
+      # 第二次上传 Release 必须再给一次 body_path（缺省时正文可能被清空）；内容与
+      # build-launcher 同源（CHANGELOG.md），覆盖成同样文案，重跑无副作用。
+      - name: 生成发版说明（GitHub 正文）
+        shell: pwsh
+        run: |
+          & ./.github/scripts/release-notes.ps1 -Tag $env:TAG -Mode github -OutFile "$env:RUNNER_TEMP/release-notes.github.md"
+          if ($LASTEXITCODE -ne 0) { throw "生成 $env:TAG 的 GitHub 发版说明失败。" }
+
+      - name: 收集安装包与签名产物
+        shell: pwsh
+        env:
+          # runner 上下文在 job 级 env 不被允许（GitHub 直接判「无效工作流」），
+          # 只能在 step 级取。
+          DIST: ${{ runner.temp }}\dist
+        run: |
+          $nsis = Join-Path $env:GITHUB_WORKSPACE 'launcher/src-tauri/target/release/bundle/nsis'
+          if (-not (Test-Path -LiteralPath $nsis)) { throw "找不到 NSIS 产物目录：$nsis" }
+          New-Item -ItemType Directory -Force -Path $env:DIST | Out-Null
+          # productName 带空格，产物文件名不确定，一律按通配收集，不写死路径。
+          foreach ($pattern in @('*_x64-setup.exe', '*_x64-setup.nsis.zip', '*.sig')) {
+            Get-ChildItem -LiteralPath $nsis -Filter $pattern -File | Copy-Item -Destination $env:DIST -Force
+          }
+          Get-ChildItem -LiteralPath $env:DIST -File | ForEach-Object { Write-Host ("{0}  {1} bytes" -f $_.Name, $_.Length) }
+          # 三件产物缺一不可：少 .sig 说明签名没生效（客户端会拒绝更新），少 .nsis.zip 就没有可更新产物。
+          foreach ($pattern in @('*_x64-setup.exe', '*_x64-setup.nsis.zip', '*_x64-setup.nsis.zip.sig')) {
+            if (-not (Get-ChildItem -LiteralPath $env:DIST -Filter $pattern -File)) { throw "产物缺失：$pattern" }
+          }
+
+      - name: 生成 latest.json
+        shell: pwsh
+        env:
+          DIST: ${{ runner.temp }}\dist
+        run: |
+          $notes = Get-Content -LiteralPath "$env:RUNNER_TEMP/release-notes.github.md" -Raw -Encoding UTF8
+          # 清单里的下载地址钉住本 tag（而不是 latest/download），保证老清单里的 URL 长期有效。
+          & ./.github/scripts/latest-json.ps1 -Version $env:TAG -Notes $notes -OutFile "$env:DIST/latest.json" -AssetBaseUrl "https://github.com/cilis/dsh-tauri-launcher/releases/download/$env:TAG" -BundleDir $env:DIST
+          if ($LASTEXITCODE -ne 0) { throw "生成 latest.json 失败。" }
+
+      - name: 上传安装包与更新清单到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ runner.temp }}/dist/*_x64-setup.exe
+            ${{ runner.temp }}/dist/*_x64-setup.nsis.zip
+            ${{ runner.temp }}/dist/*.sig
+            ${{ runner.temp }}/dist/latest.json
+          body_path: ${{ runner.temp }}/release-notes.github.md
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+      # Gitee 发行版已由 build-launcher 创建，这里只补四个附件
+      # （安装包 / nsis.zip / .sig / latest.json）。缺 token 时告警跳过，与上面 job 一致。
+      - name: 同步安装包到 Gitee
+        if: env.GITEE_TOKEN != ''
+        shell: pwsh
+        env:
+          DIST: ${{ runner.temp }}\dist
+        run: |
+          $base = 'https://gitee.com/api/v5/repos/cilis/dsh-tauri-launcher'
+          $headers = @{ 'User-Agent' = 'dsh-release-sync' }
+
+          function Invoke-Gitee {
+            param($Method, $Uri, $Form, $Attempts = 3, $TimeoutSec = 90)
+            for ($i = 1; $i -le $Attempts; $i++) {
+              try {
+                $p = @{ Method = $Method; Uri = $Uri; Headers = $headers; TimeoutSec = $TimeoutSec; ErrorAction = 'Stop' }
+                if ($Form) { $p.Form = $Form }
+                return Invoke-RestMethod @p
+              } catch {
+                if ($i -ge $Attempts) { throw }
+                Write-Host "第 $i 次调用失败: $($_.Exception.Message)，稍后重试..."
+                Start-Sleep -Seconds (5 * $i)
+              }
+            }
+          }
+
+          $rel = $null
+          try {
+            $rel = Invoke-Gitee -Method Get -Uri "$base/releases/tags/$env:TAG"
+          } catch {
+            if ($_.Exception.Response.StatusCode.value__ -ne 404) { throw }
+          }
+          if (-not $rel -or -not $rel.id) {
+            Write-Warning "Gitee 上还没有 $env:TAG 的发行版（tag 未同步），跳过安装包同步。"
+            exit 0
+          }
+
+          $existing = @()
+          try {
+            $resp = Invoke-Gitee -Method Get -Uri "$base/releases/$($rel.id)/attach_files"
+            if ($resp) { foreach ($a in @($resp)) { $existing += $a.name } }
+          } catch { Write-Host "查询附件列表失败（忽略）: $($_.Exception.Message)" }
+
+          foreach ($file in @(Get-ChildItem -LiteralPath $env:DIST -File | Sort-Object Name)) {
+            if ($existing -contains $file.Name) { Write-Host "附件 $($file.Name) 已存在，跳过。"; continue }
+            $ok = $false
+            $lastErr = ''
+            foreach ($attempt in 1..3) {
+              try {
+                # 安装包十余 MB，海外 runner 到 Gitee 偶发慢于 90s，单独放宽并叠加重试。
+                $form = @{ access_token = $env:GITEE_TOKEN; file = $file }
+                $uri = "$base/releases/$($rel.id)/attach_files?access_token=$($env:GITEE_TOKEN)"
+                Invoke-Gitee -Method Post -Uri $uri -Form $form -Attempts 2 -TimeoutSec 600 | Out-Null
+                $ok = $true
+                break
+              } catch {
+                $lastErr = $_.Exception.Message
+                Write-Host "第 $attempt 次上传 $($file.Name) 失败: $lastErr"
+                Start-Sleep -Seconds 5
+              }
+            }
+            if (-not $ok) { throw "附件 $($file.Name) 上传失败: $lastErr" }
+            Write-Host "附件 $($file.Name) 已上传。"
+          }
