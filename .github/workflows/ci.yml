@@ -19,6 +19,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 工作流的 YAML 合法 ≠ GitHub 接受：2026-10-26 那次在 job 级 env 里用了 `runner`
+      # 上下文，PyYAML 完全通过，GitHub 却把整份 release.yml 判为无效——推送后只留下
+      # 一条 0 个 job 的失败 run。actionlint 按 GitHub 的上下文规则校验，能在 PR 阶段拦住。
+      - name: 校验 GitHub Actions 工作流（actionlint）
+        shell: pwsh
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          $url = "https://github.com/rhysd/actionlint/releases/download/v$env:ACTIONLINT_VERSION/actionlint_$($env:ACTIONLINT_VERSION)_windows_amd64.zip"
+          $zip = Join-Path $env:RUNNER_TEMP 'actionlint.zip'
+          # 单次下载偶发超时会让整条流水线变红，重试三次再判失败。
+          for ($i = 1; $i -le 3; $i++) {
+            try { Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing -TimeoutSec 120; break }
+            catch { if ($i -eq 3) { throw }; Write-Host "下载失败（第 $i 次）：$($_.Exception.Message)，重试…"; Start-Sleep -Seconds 5 }
+          }
+          Expand-Archive -Path $zip -DestinationPath (Join-Path $env:RUNNER_TEMP 'actionlint') -Force
+          $exe = Join-Path $env:RUNNER_TEMP 'actionlint/actionlint.exe'
+          # 不带文件参数：actionlint 会自己找最近的 .github/workflows。
+          & $exe -no-color
+          if ($LASTEXITCODE -ne 0) { throw "actionlint 发现工作流问题（见上方输出）。" }
+          Write-Host '工作流校验通过。'
+
       # 发版说明的唯一来源是 CHANGELOG.md，release 工作流打 tag 时缺小节会直接失败。
       # 这里把「改了版本号却没写说明」提前拦在 PR 阶段，并在同一处校验中英双语格式。
       - name: 校验 CHANGELOG.md 覆盖当前版本号
